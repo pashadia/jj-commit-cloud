@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="900" viewBox="0 0 1640 900">
+<rect width="1640" height="900" fill="#FAFCFF"/>
+<text x="48" y="63.120000000000005" font-family="Arial,sans-serif" font-size="32" font-weight="700" fill="#172A43">Permission projection first; sparse Merkle traversal second</text>
+<text x="48" y="100.28999999999999" font-family="Arial,sans-serif" font-size="19" font-weight="400" fill="#52637A">Permission filtering defines what can be known. Sparse selection defines what needs to be on disk.</text>
+<rect x="48" y="152" width="440" height="155" rx="12" fill="#EEEAFE" stroke="#BCCBDD"/>
+<text x="68" y="188.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Server-private canonical tree</text>
+<text x="68" y="221.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">engine/     game/     restricted/</text>
+<text x="68" y="249.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Full history and canonical object IDs</text>
+<rect x="610" y="152" width="420" height="155" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="630" y="188.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Authorized projected tree</text>
+<text x="630" y="221.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">engine/     game/</text>
+<text x="630" y="249.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">New immutable IDs + filtered history</text>
+<rect x="1150" y="152" width="442" height="155" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="1170" y="188.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Sparse profile on this device</text>
+<text x="1170" y="221.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Select engine/src/ and game/level-a/</text>
+<text x="1170" y="249.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">A subset of the authorized view</text>
+<polyline points="488,224 610,224" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="610,224 599.6076951545867,230.0 599.6076951545867,218.0" fill="#64758B"/>
+<polyline points="1030,224 1150,224" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1150,224 1139.6076951545867,230.0 1139.6076951545867,218.0" fill="#64758B"/>
+<rect x="48" y="435" width="430" height="180" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="68" y="471.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Skip whole subtrees</text>
+<text x="68" y="504.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Equal tree AND unchanged selection: skip</text>
+<text x="68" y="532.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Nonmatching prefix: do not descend</text>
+<text x="68" y="560.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Restricted tree: never exposed to client</text>
+<rect x="608" y="435" width="430" height="180" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="628" y="471.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Walk only selected differences</text>
+<text x="628" y="504.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Batch bounded tree and manifest pages</text>
+<text x="628" y="532.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Preserve paths absent due to sparsity</text>
+<text x="628" y="560.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Expand new selections even at same commit</text>
+<rect x="1168" y="435" width="424" height="180" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="1188" y="471.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Request only missing content</text>
+<text x="1188" y="504.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Reused chunks remain local</text>
+<text x="1188" y="532.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Download and verify missing chunks</text>
+<text x="1188" y="560.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Assemble complete files; safe replacement</text>
+<polyline points="1370,307 1370,365 260,365 260,435" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="260,435 254.0,424.60769515458674 266.0,424.60769515458674" fill="#64758B"/>
+<polyline points="478,525 608,525" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="608,525 597.6076951545867,531.0 597.6076951545867,519.0" fill="#64758B"/>
+<polyline points="1038,525 1168,525" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1168,525 1157.6076951545867,531.0 1157.6076951545867,519.0" fill="#64758B"/>
+<rect x="48" y="700" width="740" height="112" rx="12" fill="#FFF1D5" stroke="#BCCBDD"/>
+<text x="68" y="736.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Integrity rule</text>
+<text x="68" y="769.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Never return a filtered tree under the canonical TreeId.</text>
+<text x="68" y="797.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Never treat an inaccessible or sparse path as a deletion.</text>
+<rect x="848" y="700" width="744" height="112" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="868" y="736.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">Performance rule</text>
+<text x="868" y="769.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Work follows visited tree pages + selected changes + missing bytes.</text>
+<text x="868" y="797.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">It does not require enumerating every file in the repository.</text>
+</svg>

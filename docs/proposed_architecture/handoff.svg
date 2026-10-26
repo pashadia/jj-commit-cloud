@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="830" viewBox="0 0 1640 830">
+<rect width="1640" height="830" fill="#FAFCFF"/>
+<text x="48" y="63.120000000000005" font-family="Arial,sans-serif" font-size="32" font-weight="700" fill="#172A43">A commit has several distinct completion states</text>
+<text x="48" y="100.28999999999999" font-family="Arial,sans-serif" font-size="19" font-weight="400" fill="#52637A">Immediate local progress is compatible with explicit, durable cross-computer handoff.</text>
+<rect x="48" y="175" width="344" height="220" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="68" y="211.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">1  Local durable</text>
+<text x="68" y="244.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Snapshot and hash frozen bytes</text>
+<text x="68" y="272.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Flush CAS; commit op + outbox</text>
+<text x="68" y="300.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Developer can continue</text>
+<polyline points="392,285 448,285" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="448,285 437.60769515458674,291.0 437.60769515458674,279.0" fill="#64758B"/>
+<rect x="448" y="175" width="344" height="220" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="468" y="211.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">2  Upload + validate</text>
+<text x="468" y="244.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Reuse existing authorized chunks</text>
+<text x="468" y="272.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Stream only missing data</text>
+<text x="468" y="300.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Verify content and dependency closure</text>
+<polyline points="792,285 848,285" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="848,285 837.6076951545867,291.0 837.6076951545867,279.0" fill="#64758B"/>
+<rect x="848" y="175" width="344" height="220" rx="12" fill="#EEEAFE" stroke="#BCCBDD"/>
+<text x="868" y="211.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">3  Remotely synced</text>
+<text x="868" y="244.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Publish root + mapping + event</text>
+<text x="868" y="272.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">One Spanner transaction</text>
+<text x="868" y="300.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Exact handoff token becomes valid</text>
+<polyline points="1192,285 1248,285" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1248,285 1237.6076951545867,291.0 1237.6076951545867,279.0" fill="#64758B"/>
+<rect x="1248" y="175" width="344" height="220" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="1268" y="211.11" font-family="Arial,sans-serif" font-size="21" font-weight="700" fill="#172A43">4  Ready on computer B</text>
+<text x="1268" y="244.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Replay authorized history</text>
+<text x="1268" y="272.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Fetch selected missing bytes</text>
+<text x="1268" y="300.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Journal and finish native checkout</text>
+<text x="48" y="456.02" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#172A43">Background upload starts before an explicit commit when safe snapshots are available.</text>
+<rect x="48" y="500" width="744" height="176" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="68" y="537.02" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#172A43">Continuous work</text>
+<text x="68" y="569.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Watcher events are hints; uploads read immutable local snapshots.</text>
+<text x="68" y="597.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Unsynced objects stay pinned across crashes, sleep and disconnection.</text>
+<text x="68" y="625.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Concurrent device operations remain forks in the owner’s jj operation DAG.</text>
+<rect x="848" y="500" width="744" height="176" rx="12" fill="#FFF1D5" stroke="#BCCBDD"/>
+<text x="868" y="537.02" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#172A43">Honest limits</text>
+<text x="868" y="569.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">A new 10 GiB incompressible asset at 100 Mb/s: ~14.3 min per full transfer.</text>
+<text x="868" y="597.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">A Cloud Storage acknowledgement does not prove regional replication.</text>
+<text x="868" y="625.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Incoming notifications never overwrite an actively edited folder.</text>
+<text x="48" y="764.11" font-family="Arial,sans-serif" font-size="21" font-weight="400" fill="#52637A">“Synced” confirms remote storage + publication. “Ready” also includes destination materialization.</text>
+</svg>

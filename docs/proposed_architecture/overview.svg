@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="920" viewBox="0 0 1640 920">
+<rect width="1640" height="920" fill="#FAFCFF"/>
+<text x="48" y="63.120000000000005" font-family="Arial,sans-serif" font-size="32" font-weight="700" fill="#172A43">One canonical monorepo; only authorized views reach devices</text>
+<text x="48" y="100.28999999999999" font-family="Arial,sans-serif" font-size="19" font-weight="400" fill="#52637A">Target Rust architecture · GCP first · native folders on Linux, Windows and macOS</text>
+<rect x="48" y="150" width="380" height="195" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="68" y="185.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Computer A</text>
+<text x="68" y="219.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Native sparse working folder</text>
+<text x="68" y="247.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Custom jj + local sync daemon</text>
+<text x="68" y="275.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Durable CAS / op DAG / outbox</text>
+<rect x="48" y="470" width="380" height="195" rx="12" fill="#E8F1FE" stroke="#BCCBDD"/>
+<text x="68" y="505.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Computer B</text>
+<text x="68" y="539.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Same owner + permission view</text>
+<text x="68" y="567.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Fetch exact handoff revision</text>
+<text x="68" y="595.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Download selected missing chunks</text>
+<rect x="568" y="150" width="440" height="195" rx="12" fill="#EEEAFE" stroke="#BCCBDD"/>
+<text x="588" y="185.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Authorized sync + projection</text>
+<text x="588" y="219.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Private drafts and per-view history</text>
+<text x="588" y="247.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Publish / handoff / replay / queries</text>
+<text x="588" y="275.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Canonical trees stay server-private</text>
+<rect x="1168" y="150" width="424" height="195" rx="12" fill="#EEEAFE" stroke="#BCCBDD"/>
+<text x="1188" y="185.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Spanner metadata authority</text>
+<text x="1188" y="219.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Canonical refs, mappings and ACLs</text>
+<text x="1188" y="247.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Scoped streams + event outbox</text>
+<text x="1188" y="275.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Short transactions; hashed keys</text>
+<rect x="568" y="470" width="440" height="195" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="588" y="505.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Regional transfer gateways</text>
+<text x="588" y="539.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Authenticate before cache lookup</text>
+<text x="588" y="567.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Verify hashes; stream bounded data</text>
+<text x="588" y="595.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Security-scoped SSD caches</text>
+<rect x="1168" y="470" width="424" height="195" rx="12" fill="#E4F5EF" stroke="#BCCBDD"/>
+<text x="1188" y="505.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Cloud Storage immutable CAS</text>
+<text x="1188" y="539.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">File chunks + independently packed files</text>
+<text x="1188" y="567.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Tree / file manifests + graph segments</text>
+<text x="1188" y="595.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Authoritative retained object generations</text>
+<polyline points="428,230 568,230" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="568,230 557.6076951545867,236.0 557.6076951545867,224.0" fill="#64758B"/>
+<text x="463" y="214.56" font-family="Arial,sans-serif" font-size="16" font-weight="400" fill="#64758B">control</text>
+<polyline points="428,540 500,540 500,300 568,300" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="568,300 557.6076951545867,306.0 557.6076951545867,294.0" fill="#64758B"/>
+<polyline points="1008,230 1168,230" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1168,230 1157.6076951545867,236.0 1157.6076951545867,224.0" fill="#64758B"/>
+<text x="1040" y="214.56" font-family="Arial,sans-serif" font-size="16" font-weight="400" fill="#64758B">metadata</text>
+<polyline points="428,305 468,305 468,585 568,585" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="568,585 557.6076951545867,591.0 557.6076951545867,579.0" fill="#64758B"/>
+<polyline points="428,620 568,620" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="568,620 557.6076951545867,626.0 557.6076951545867,614.0" fill="#64758B"/>
+<text x="462" y="653.56" font-family="Arial,sans-serif" font-size="16" font-weight="400" fill="#64758B">file bytes</text>
+<polyline points="1008,565 1168,565" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1168,565 1157.6076951545867,571.0 1157.6076951545867,559.0" fill="#64758B"/>
+<text x="1040" y="549.56" font-family="Arial,sans-serif" font-size="16" font-weight="400" fill="#64758B">object I/O</text>
+<polyline points="785,470 785,345" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="785,345 791.0,355.39230484541326 779.0,355.39230484541326" fill="#64758B"/>
+<text x="805" y="412.56" font-family="Arial,sans-serif" font-size="16" font-weight="400" fill="#64758B">verified receipt</text>
+<rect x="568" y="720" width="1024" height="100" rx="12" fill="#F0F4F9" stroke="#BCCBDD"/>
+<text x="588" y="755.2" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#172A43">Outbox → Pub/Sub → watch gateways</text>
+<text x="588" y="789.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Notifications are hints. Durable scoped replay and handoff tokens establish the exact state.</text>
+<polyline points="1380,345 1620,345 1620,770 1592,770" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="1592,770 1602.3923048454133,764.0 1602.3923048454133,776.0" fill="#64758B"/>
+<polyline points="568,770 520,770 520,690 235,690 235,665" fill="none" stroke="#64758B" stroke-width="3"/>
+<polygon points="235,665 241.0,675.3923048454133 229.0,675.3923048454133" fill="#64758B"/>
+<rect x="48" y="720" width="380" height="100" rx="12" fill="#FFF1D5" stroke="#BCCBDD"/>
+<text x="68" y="754.29" font-family="Arial,sans-serif" font-size="19" font-weight="700" fill="#172A43">Native filesystem limit</text>
+<text x="68" y="789.38" font-family="Arial,sans-serif" font-size="18" font-weight="400" fill="#172A43">Selected files must fully materialize.</text>
+<text x="48" y="878.29" font-family="Arial,sans-serif" font-size="19" font-weight="400" fill="#52637A">Scale comes from independent draft streams, immutable content, scoped projection caches and bounded work.</text>
+</svg>

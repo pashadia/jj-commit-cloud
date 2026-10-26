@@ -2,13 +2,45 @@
 
 ## 1. Setup Aliases & Start the Server
 
-Configure shell aliases pointing to the compiled Commit Cloud server (**jj-cc-server**), custom Jujutsu CLI (**jj**), and VFS daemon (**jjfsd**) binaries:
+For manual commands, configure aliases for the Commit Cloud server
+(**jj-cc-server**) and custom Jujutsu CLI (**jj**). The VFS alias is only needed
+for the optional VFS workflow in section 3:
 
 ```bash
 alias sjjs=/path/to/jj-commit-cloud-poc/target/release/jj-cc-server
 alias sjj=/path/to/jj-commit-cloud-poc/target/release/jj
+# Optional, for the VFS workflow in section 3 only:
 alias sjjvfs=/path/to/jj-vfs-poc/target/release/jjfsd
 ```
+
+The native-filesystem workflow does not need the VFS binary. Build the server,
+custom `jj`, and its local connection daemon:
+
+```bash
+cargo build --release -p jj-commit-cloud-server -p cli -p jj-commit-cloud-daemon
+```
+
+You can use `scripts/cc-workflow.sh` to start the local SQLite server and
+initialize a workspace in native mode:
+
+```bash
+scripts/cc-workflow.sh up \
+  --workspace /tmp/cc_native_demo \
+  --project-id my-project
+```
+
+Native mode stores working files directly in the selected workspace folder and
+does not mount or require `jjfsd`. The launcher uses SQLite by default and
+stores its database, process IDs, and logs under its state directory. Pass
+`--store-type spanner --spanner-db <SPANNER_RESOURCE>` to use Spanner. Set
+`JJ_CC_SERVER_BIN`, `JJ_CC_JJ_BIN`, or `JJ_CC_DAEMON_BIN` to select binaries
+outside the default build paths. `JJ_CC_PROFILE=debug` selects debug paths.
+
+Use `scripts/cc-workflow.sh status` to view the server and
+`scripts/cc-workflow.sh down` to stop the managed server. `down` leaves the
+SQLite database and workspace files in place. The custom `jj` binary runs
+commands as needed; its local connection daemon starts automatically on the
+first RPC and remains running after `down`.
 
 Start the Commit Cloud server with the persistent SQLite storage backend *(as of srachaba-3-store-errors)*:
 
@@ -23,20 +55,59 @@ Or start the server backed by Google Cloud Spanner *(as of srachaba-spanner)*:
 sjjs --port 8080 --store-type spanner --spanner-db <SPANNER_LINK>
 ```
 
-## 2. Initialize a Commit Cloud Workspace
+## 2. Initialize a Native Filesystem Workspace
 
-Create a workspace directory and initialize it against the running Commit Cloud server *(with **--project-id** as of srachaba-8-project-id)*:
+Create a folder for the workspace and initialize it against the running server.
+The `local` working-copy type means checkout and edits happen in this folder on
+the machine's native filesystem. Commits and other Commit Cloud objects still
+use the configured remote server.
 
 ```bash
-mkdir -p /tmp/vfs_demo && cd /tmp/vfs_demo
-sjj cc init --server http://localhost:8080 --project-id <PROJECT_ID>
+mkdir -p /tmp/cc_native_demo && cd /tmp/cc_native_demo
+sjj cc init --server http://localhost:8080 \
+  --project-id <PROJECT_ID> \
+  --working-copy-type local .
 ```
 
-## 3. Sparse Checkout & VFS Integration *(as of srachaba-working-copy)*
+For example, create and commit files directly in that folder:
+
+```bash
+cd /tmp/cc_native_demo
+printf 'hello from the native working copy\n' > hello.txt
+sjj status
+sjj new
+sjj commit -m "Add hello.txt"
+```
+
+The launcher selects `--working-copy-type local` when it initializes a new
+workspace. Working-copy type is chosen at initialization, so use a new folder
+when switching an existing Commit Cloud workspace to native mode. For an
+existing folder that you have already initialized with `--working-copy-type
+local`, pass `--reuse-existing-workspace` to the launcher.
+
+## 3. Optional Sparse Checkout & VFS Integration *(as of srachaba-working-copy)*
 
 ![Sparse & VFS Workflow](./sparse_workflow.png)
 
-Clear all physical files from local disk, mount the virtual filesystem, browse commits or workspaces on-demand, and selectively add files back to edit:
+To use the VFS workflow instead, build `jjfsd` from the sibling VFS project:
+
+```bash
+(cd ../jj-vfs-poc && cargo build --release --bin jjfsd)
+```
+
+The launcher can clear the working copy and start the mount in one step:
+
+```bash
+scripts/cc-workflow.sh up \
+  --mode vfs \
+  --workspace /tmp/vfs_demo \
+  --mount /tmp/vfs_mount \
+  --project-id my-project \
+  --clear-working-copy
+```
+
+For a workspace and server started manually, clear physical files from the
+working copy and mount the VFS directly:
 
 ```bash
 # Clear physical working copy from local disk
