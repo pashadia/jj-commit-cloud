@@ -70,6 +70,7 @@
 | N18 | At tier 1 the upstream *is* the authority, so `UPSTREAM` and `AUTHORITY` are indistinguishable; no sentence says which to report | R3 |
 | N19 | Storage is keyed by `project_id` (client-supplied), not `repo_id`, which undermines per-repo isolation (I26, AC22) | R3 |
 | N20 | The superseded ADR still sits in `docs/design/`, and Appendix C's description of it (385 lines) no longer matches the file (860 lines) | R1, R3 (`[verified]`) |
+| N21 | **"Pin" names two unrelated things**: a snapshot held for a read sequence, and a blob kept from eviction. The design uses "pinned read", "pinned snapshot" and "pins" interchangeably, which makes the reads section unreadable | operator review (`[verified]`) |
 
 ## Part D — reviewer errors
 

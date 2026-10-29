@@ -41,14 +41,14 @@ Other people's work flows the other way: up to the authority, then back down to 
 
 ## 4. Reads
 
-- **RQ-14** Every read names a pinned snapshot. Reads that share a snapshot resolve to one operation and one view; a `readdir` followed by reads must not tear across operations.
-- **RQ-15** A snapshot too old to serve produces an explicit retryable "stale snapshot" error. Silent tearing is not acceptable.
-- **RQ-16** Metadata is always served by the local node, which holds the op log, heads, commit headers, tree manifests and the derived attributes the VFS needs.
+- **RQ-14** A sequence of reads sees **one consistent state** of the repository. When a client starts reading — a directory listing, then the files in it — it names the operation it is reading from, and every call in that sequence is answered from that operation. The operation is **held** for the duration, so garbage collection cannot remove it underneath the reader while the sequence is running. *(A CLI command already does this implicitly: it reads one state from start to finish. The VFS has no command boundary, so it holds per open handle instead.)*
+- **RQ-15** If that state is too old to serve, the call fails with an explicit retryable "stale" error. It never silently mixes two states. *(The failure being ruled out: `stat` reports 100 bytes, `read` returns 90 with no error, because a commit landed between the two calls.)*
+- **RQ-16** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; this design assumes it is shared.)*
 - **RQ-17** Blobs are fetched lazily. A read of a blob that is not local blocks up to a timeout and then returns a retryable error.
 - **RQ-18** `stat` never lies. Size, mode and mtime come from metadata, never from fetching content.
-- **RQ-19** Attributes are deterministic: size, mtime, executable bit and directory ordering are pure functions of the pinned snapshot.
-- **RQ-20** Prefetch is configurable per node. At minimum, LRU warm-up of previously cached content; never every blob of an operation head on a large repo.
-- **RQ-21** Pins are a replica concern. They order eviction, are scoped per user and client, and are **never** an input to garbage collection.
+- **RQ-19** Attributes are deterministic: given one operation, size, mtime, executable bit and directory ordering always have the same values. *(Agreed as stated. Deferred: which timestamp an mtime carries — content time, commit time or checkout time — is a policy choice, not part of this requirement.)*
+- **RQ-20** Prefetching is optional and deferred. If a node implements it, it may warm its cache with content it used before, but it must never fetch every blob of an operation on a large repository.
+- **RQ-21** A **cache hint** (the design calls it a *pin*) keeps a blob from being evicted while a client is reading it. It is scoped per user and per client, expires on its own, and is **never** an input to garbage collection. It is unrelated to the hold in RQ-14, which protects an operation rather than a blob.
 
 ## 5. Writes, acknowledgements and durability
 
@@ -151,6 +151,7 @@ Stated as out of scope now, without prejudice to later phases:
 | OQ-7 | What "tracking a bookmark" means: a read-only view that moves with the bookmark, or the workspace itself following it | A view can change under a reader; a working copy cannot |
 | OQ-8 | Mount layout: is the mount root the working copy, or does the mount expose a directory of workspaces each containing one? | Decides path resolution in the VFS, inode identity across workspaces, and where the CLI expects `.jj`. It must be settled before the write protocol is specified |
 | OQ-9 | Does the node keep the workspace registry (`ListWorkspaces`, `CheckWorkingCopyChanges`), or is the workspace purely local apart from its fence? | The registry exists today; keeping it makes the fence natural, dropping it removes a cross-machine listing everyone may expect |
+| OQ-10 | Does the operation log belong in the commit cloud, or does each machine keep its own while only commits and bookmarks are shared? | The design's convergence story — pushing an operation, heads compare-and-swap, parked operations — assumes a shared op log. Keeping it local turns the commit cloud into a content store with a remote, which is git's shape, and changes the shape of most of the write path |
 
 ---
 
