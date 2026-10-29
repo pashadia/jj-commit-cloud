@@ -1,13 +1,13 @@
 # Multi-tier commit cloud for jj — design
 
 **Status:** Proposal for review. **No decision in this document is ratified.** Every D-number is a drafting proposal that can be reopened; §10 lists the ones that block implementation.
-**Open questions:** five — OQ-1 custody acknowledgement, OQ-2 offline authorization, OQ-3 FUSE error code for a stale snapshot, OQ-4 announcement rule at a replica (D10 against I2), OQ-5 accepting authority-disk-loss exposure.
+**Open questions:** seven — OQ-1 custody acknowledgement, OQ-2 offline authorization, OQ-3 FUSE error code for a stale snapshot, OQ-4 announcement rule at a replica (D10 against I2), OQ-5 accepting authority-disk-loss exposure, OQ-6 where jj-lib runs for snapshotting, OQ-7 what a client that "tracks a bookmark" follows.
 **Owner:** Bogdan (operator). Concept approval: Google team lead. No deadline is set.
 **Evidence:** briefs A (jj-commit-cloud), B (jj-vfs), C (prior art). Every code citation is `file:line` against commit `47688804`; Appendix B makes each brief citation self-describing.
 
 ## Bottom line
 
-- **Conclusion.** Build commit cloud as one node program whose role is set per (node, repo): **authority** — the durable owner, which may have no upstream at all — or **replica**, which has exactly one upstream, is not durable, and may be emptied at any time. Every CLI and every VFS mount talks only to its local node, over a per-user Unix socket. Reads name a pinned snapshot. Writes are fsynced locally before acknowledgement and report the durability they actually reached. Coherence is server push. A replica is a cache, not a backup.
+- **Conclusion.** Build commit cloud as one node program whose role is set per (node, repo): **authority** — the durable owner, which may have no upstream at all — or **replica**, which has exactly one upstream, is not durable, and may be emptied at any time. Every CLI and every VFS mount talks only to its local node, over a per-user Unix socket. Reads name a pinned snapshot. Writes are fsynced locally before acknowledgement and report the durability they actually reached. Coherence is server push. A replica is a cache, not a backup. The mount is a working copy, not a projection: it writes, snapshots behind the user, and follows other people's work without being remounted.
 - **Why it matters.** Today a single `stat` can stream a whole file across the network to learn its size, and offline work is impossible. This design is what makes metadata local, bytes local, and offline work acceptable without silently losing it.
 - **Recommended option.** Option A, shipped first in Option B's configuration (offline writes disabled) so the wire format lands before the reconcile path. Option 0 is the rollback. Option C (every node an authority) is rejected.
 - **Confidence.** High on structure: the role split, the custody rule and the push order all follow from one commitment — one durable owner per repo — and survived adversarial review. Medium on the load-bearing number: whether tree manifests fit at every tier. One two-day experiment (E1′) decides it.
@@ -106,11 +106,13 @@ flowchart BT
 
 ## 3. Scope
 
-**In.** Node roles and their binding; replication and coherence; the metadata plane (operation log, heads, views, commit headers, tree manifests, derived VFS attributes); the blob plane; pinned reads; writes with explicit durability; offline acceptance, dirty tracking and reconcile; cache, eviction, pinning and garbage collection; the protocol changes those require; acceptance criteria and one falsifying experiment.
+**In.** Node roles and their binding; replication and coherence; the metadata plane (operation log, heads, views, commit headers, tree manifests, derived VFS attributes); the blob plane; pinned reads; **the read-write mount**: staging at the node, snapshot cadence, propagation, and live view updates; writes with explicit durability; offline acceptance, dirty tracking and reconcile; cache, eviction, pinning and garbage collection; the protocol changes those require; acceptance criteria and one falsifying experiment.
 
-**Out.** VFS snapshotting and any VFS write path; implementing the pluggable stores; packing, segmentation and compaction; running a proof of concept during this design pass; production code; any change to the `jj-vfs` repository; CLI↔VFS coordination; encryption at rest; TLS for non-local peers; backup and restore.
+**Out.** Implementing the pluggable stores — the seam stays, one implementation ships; packing, segmentation and compaction; running a proof of concept during this design pass; production code; editing the `jj-vfs` codebase (this document states what the VFS must do); CLI↔VFS coordination beyond the socket; encryption at rest; TLS for non-local peers; backup and restore.
 
-Two constraints worth stating where they will be seen:
+Two scope constraints apply to the MVP: **Linux only** (one FUSE implementation, no portability layer), and **one implementation per seam** (the trait boundaries stay in the design, but shipping a second implementation is not part of this phase).
+
+Two implementation constraints worth stating where they will be seen:
 
 - **Transport is gRPC only**, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path under `$XDG_RUNTIME_DIR`, never loopback TCP.
 - **The operator specified SHA-256 content hashes.** Today's server and jj-lib use git-compatible SHA-1: operation ids are 16 bytes and commit ids 20 (`common/src/lib.rs:12-14`), and jj-lib's `CommitId`/`FileId` are fixed-width. A client-plane mapping layer converts 32-byte keys to jj's 16/20-byte ids. This is a real cost, tracked as risk R9, not a rename.
@@ -302,6 +304,47 @@ Convergence is a property of the operation graph, not of every view field. The a
 
 The merge operation's parents are the reduced head set; its view is the field-wise result. Remaining bookmark conflicts are recorded, not invented away. This is Coda-style reintegration, not last-write-wins: a human may be required, and the system says when.
 
+### 4.8 The mount is a working copy
+
+Sections 4.1 to 4.7 treat the mount as a reader. In the MVP it is also where a working copy lives, which changes two things: where bytes go, and when an operation exists.
+
+The VFS keeps nothing across a mount. It does not buffer file data, does not hold a metadata cache, and has no state worth restoring after a restart. Every `write()` is forwarded to the local node over the Unix socket, and the node acknowledges once the bytes are durable in its **staging area** — a directory of ordinary files on the node's own disk holding the current content of files that have changed but are not yet part of an operation.
+
+Nothing is snapshotted at that moment. A snapshot is taken when writes go quiet for 0.5–1 s, immediately on `fsync` or `close`, or at a 30 s cap so a program that writes continuously cannot starve it. The snapshot hashes the changed files, writes the new blobs, builds the tree over the workspace's base and creates the operation. Propagation to upstream is a third, slower clock: on idle, on `fsync`, or every 5–30 s. All three intervals are runtime-configurable.
+
+**D-11 — Write, snapshot, propagate.**
+
+```mermaid
+sequenceDiagram
+  participant App as Editor
+  participant VFS
+  participant N as Local node
+  participant S as Staging files
+  participant B as Blob store
+  App->>VFS: 1 write(fd, buf)
+  VFS->>N: 2 WriteFile(range)
+  N->>S: 3 append at offset
+  N-->>VFS: 4 ack: staged and durable
+  VFS-->>App: 5 write returns
+  Note over N: 6 quiet 0.5-1 s, or fsync/close,<br/>or the 30 s cap
+  N->>B: 7 hash changed files, store blobs
+  N->>N: 8 build tree, create op
+  N-->>VFS: 9 SnapshotDone, new token
+  Note over N: 10 propagate on its own clock
+```
+
+**What to notice.** Three different events: the write is durable at the node, the operation exists, and the authority has it. Only the first is on the caller's critical path.
+
+**Why a mutable region is unavoidable, and why it is not a cache.** Content-addressed objects are immutable, so a file cannot be assembled inside the blob store: its id is only known when its last byte arrives. Something must hold the current content of a file between the first write and the snapshot, and it must accept writes at arbitrary offsets. The staging directory is that thing. At snapshot time each changed file is hashed whole and stored as a single blob, exactly as a shell `jj` would do after the same edit; a later edit produces a new blob with a new hash and the old one stays until GC. Writing into the blob store per `write()` instead would create an orphan blob per keystroke and re-hash the whole file each time.
+
+**Crash.** A VFS crash loses nothing that a `write()` returned, because the bytes are already at the node. A node crash loses file content that had not reached the node, which is the same exposure as an editor's own page cache. Transient buffers are never restored; a mount that dies is remounted from the node's state.
+
+**Conflict is surfaced, not avoided.** When a base advances while a workspace holds staged changes — a resume elsewhere, an upstream bookmark move, a rebase — the staged content is re-applied onto the new base and any conflict appears as a conflicted file, the way jj already represents it. The mount never replaces a dirty file silently so that a refresh can succeed.
+
+**Two shapes for the snapshot, one still open (OQ-6).** Either jj-lib runs inside the node, which stages, snapshots and writes the operation itself and leaves the VFS a thin FUSE-to-RPC shim (proposed); or jj-lib stays in the VFS and snapshots a staging directory that both processes can see. The first removes cross-process sharing and one copy of repo state; the second leaves today's read path unchanged.
+
+**What "seeing other users' work" covers (OQ-7).** A bookmark advanced elsewhere propagates to the authority and then to every subscribed client, which refreshes its metadata and may prefetch the blobs. A read-only view that follows a bookmark can then change under the reader, which is the point. A workspace with a working copy in it cannot follow a bookmark the same way: its base moves only by reconcile, and its own dirty content is re-applied as above. Whether those are two different mounts, or one mount with two modes, is still open.
+
 ## 5. Rules the system must keep
 
 Each is testable; the bracketed id is the check in §12.3. These rules are the design's own proposals. Each rests on a decision in Appendix A, and none of those is ratified yet.
@@ -332,6 +375,11 @@ Each is testable; the bracketed id is the check in §12.3. These rules are the d
 - **I24 Wholesale eviction only when drained.** A replica may be dropped in full only with pending zero; otherwise the request is refused with an inventory. *(IT-24)*
 - **I25 Multi-upstream not foreclosed.** `UpstreamRef` is a list validated to length at most one; push idempotency assumes nothing about parentage. *(PT-25)*
 - **I26 Role per repo.** One node may be authority for A and replica for B with no cross-repo namespace, quota or credential leakage. *(MT-26)*
+- **I27 No persistent VFS state.** The mount retains no blob, tree or metadata cache across a restart; a remount re-derives everything from the node. Inode maps and view tokens are per-mount. *(IT-27)*
+- **I28 Write acknowledgement is local.** A `write()` returns only after the node has durably staged the bytes. It does not wait for a snapshot, for an operation, or for the authority. *(IT-28)*
+- **I29 Snapshot bound.** While a writer is active, staged changes become an operation within the maximum snapshot age, and immediately on `fsync` or `close`. A burst of writes produces one operation per burst, not one per write. *(PT-29)*
+- **I30 Live view.** A client subscribed to its node sees operations that arrive from upstream without remounting, within the propagation bound. *(IT-30)*
+- **I31 No silent overwrite on refresh.** When a base advances under a workspace holding staged or dirty content, that content is re-applied and conflicts surface as conflicted files. The mount never replaces a dirty file so that a refresh can succeed. *(IT-31)*
 
 ## 6. The wire
 
@@ -608,6 +656,8 @@ sequenceDiagram
 | R9 | 32-byte SHA-256 keys against jj's fixed 16-byte operation and 20-byte commit ids | jj-lib liaison | truncate with a collision check on write; fork only if needed |
 | R10 | **OQ-4:** D10 as drafted says an announced operation's blobs must be *durable at the announcing node*, which no replica can satisfy (D1); I2 relaxes it to local fsync or authority custody | CC design owner | operator decision: tighten to custody-only, or amend D10 to mean *reachable from the announcing node* |
 | R11 | **OQ-5:** authority disk loss without an upstream means repo loss | product/ops | accept explicitly, or fund backup before any pilot |
+| R12 | **OQ-6:** where jj-lib runs for snapshotting | CC design owner | proposed: inside the node; the VFS keeps no repo state. Alternative: in the VFS, over a shared staging directory |
+| R13 | **OQ-7:** what a client that "tracks a bookmark" follows — a read-only view that moves with the bookmark, or the workspace itself | CC design owner | proposed: a bookmark view is a separate read-only mount; a workspace only reconciles, never follows |
 
 ## 11. Deferred
 
@@ -615,7 +665,7 @@ sequenceDiagram
 2. Authority handover, failover, and application-level backup and restore. v1 states the exposure instead.
 3. Packing, segments and key-value storage (D15): inode pressure against compaction cost; segments break per-object deletion; a key-value store hides the byte accounting LRU needs. v1 is one file per object.
 4. Ranged reads and chunking (D16): whole-object reads make `read(offset=1 GiB, len=4 KiB)` transfer a gigabyte unless a per-open stream is reused.
-5. Live reflection of remote operations into a live mount (D25). This is structural, not additive: the VFS loads at head once (`jj-vfs/src/main.rs:49-51`), so v1 mounts are pinned until remount.
+5. Prefetch beyond LRU warm-up (D26). Never every blob of a head. Live reflection is **no longer deferred**: the MVP requires it (§4.8, I30, D37).
 6. Prefetch beyond LRU warm-up (D26). Never every blob of a head.
 7. Garbage-collection numbers: retention, mark cadence, batch size, hold caps.
 8. Checkpoint export, until the trigger in §8e fires.
@@ -655,6 +705,11 @@ sequenceDiagram
 - **AC20 (I15)** Pausing GC between mark and sweep and then committing leaves the operation and blobs retained, or fails `CommitOp` with `BASE_GC` and retries.
 - **AC21 (I9, I21)** After restart, an old `resume_seq` yields `SEQ_EXPIRED`, a full resync, and no gap or duplicate sequence number.
 - **AC22 (I26)** A node that is authority for A and replica for B leaks no A namespace, quota or credential into B.
+- **AC23 (I27)** Kill the VFS and remount: no bytes or metadata survive from the previous mount, and every write that returned is still present.
+- **AC24 (I28)** kill -9 the VFS immediately after `write()` returns: the data is at the node and appears in the next snapshot.
+- **AC25 (I29)** A program writing continuously for 60 s produces snapshots no more often than every 0.5 s and no less often than every 30 s; an `fsync` produces one immediately.
+- **AC26 (I30)** Another client commits at the authority; a subscribed client shows the new heads without a remount, within the propagation bound.
+- **AC27 (I31)** A base advances while the workspace holds dirty files: the content is re-applied, conflicts appear as conflicted files, and no dirty byte changes except where the merge changed it.
 
 ### 12.3 Traceability
 
@@ -673,6 +728,8 @@ sequenceDiagram
 | I19–I21 fetch, attributes, cursor | IT-19, FU-20, TC-21: 100 cold reads; one token on two nodes; cursor across snapshots | the fetch counter exceeds one, attributes differ, or a silent skip occurs |
 | I22–I23 authorization and debounce | IT-22 and TC-23: user A then user B; injected clock | bytes leave, or a fixed floor appears in acknowledgement delay |
 | I24–I26 eviction and roles | IT-24, PT-25, MT-26: drop a dirty replica; compile-fail on a two-element `UpstreamRef`; role split | dirty eviction succeeds, the type permits fan-in, or cross-repo reach exists |
+| I27–I29 stateless write path | IT-27/28 and PT-29: kill the VFS after a returning write; write continuously for 60 s | a remount restores cached state, a write returns before the node holds it, or a writer goes unsnapshotted past the cap |
+| I30–I31 live view and refresh | IT-30/31: commit from another client; advance a base under dirty files | the mount needs a remount to see new heads, or a refresh replaces a dirty byte |
 
 ### 12.4 Test layers
 
@@ -754,11 +811,11 @@ On-disk format and operation-envelope canonicalisation are versioned (`envelope_
 
 ### 12.11 Consequences
 
-**It buys** one code path at any depth, a laptop that is a genuine node, offline writes with a stated RPO, metadata locality, one owner for merge and GC, and acceptance decoupled from replication. **It costs** a replication and coherence plane, a reconcile path, dirty bookkeeping and three user-visible states; local-disk RPO for provisional writes; a replica that is not a backup; **authority disk loss without an upstream meaning repo loss**; bookmark conflicts that can require a human; and a stop-the-world upgrade when the envelope changes.
+**It buys** one code path at any depth, a laptop that is a genuine node, offline writes with a stated RPO, metadata locality, one owner for merge and GC, and acceptance decoupled from replication. **It costs** a replication and coherence plane, a reconcile path, dirty bookkeeping and three user-visible states; a staging area and a snapshot scheduler at the node; a VFS that must be honest about what it has already acknowledged; a re-apply path that can produce conflicts while the user is editing; local-disk RPO for provisional writes; a replica that is not a backup; **authority disk loss without an upstream meaning repo loss**; bookmark conflicts that can require a human; and a stop-the-world upgrade when the envelope changes.
 
-## Appendix A — the 31 proposed decisions
+## Appendix A — the proposed decisions (D1–D37)
 
-Reproduced from the drafting record, with the status marker corrected from "agreed" to "proposed" in D12 and D13. **None of these is ratified.** They are reproduced so this document stands alone and can be argued against item by item.
+Reproduced from the drafting record, with the status marker corrected from "agreed" to "proposed" in D12 and D13. D32–D37 were added after the scope change to a read-write mount. **None of these is ratified.** They are reproduced so this document stands alone and can be argued against item by item.
 
 **D1** Roles: exactly two. "authority" = durable, owns the repo, handles metadata and blobs, MAY have no upstream at all (first-class, fully supported local-first configuration). "replica" = has exactly one upstream for that repo, is NOT durable, and may be evicted wholesale at any time. Roles are configured PER (node, repo), not per node: one node can be authority for repo A and replica for repo B.
 
@@ -822,6 +879,20 @@ Reproduced from the drafting record, with the status marker corrected from "agre
 
 **D31** Deliverable: an ADR/decision memo, written to `docs/design/` in the current working directory.
 
+Added after the scope change to a read-write mount. Also unratified.
+
+**D32** MVP scope: Linux only, one implementation per seam, and the read-write mount is in scope.
+
+**D33** The VFS is stateless: no bytes and no metadata survive a mount. Transient per-mount state (inode map, view token) is allowed and is never restored after a crash.
+
+**D34** Writes stream to the local node per call; the node acknowledges after the bytes are durable in its staging area, before any snapshot exists.
+
+**D35** Snapshot cadence: trailing debounce 0.5–1 s, a 30 s maximum age, and an immediate snapshot on `fsync` or `close`; runtime-configurable.
+
+**D36** Propagation cadence is independent of snapshotting: on idle, on `fsync`, every 5–30 s; runtime-configurable; eventual to the authority and back down.
+
+**D37** Live updates: operations that advance bookmarks or heads propagate to the authority and then to every subscribed client, which refreshes metadata and may prefetch blobs without user action.
+
 ## Appendix B — evidence index
 
 The three briefs are outside this repository; this index makes every citation self-describing.
@@ -850,3 +921,7 @@ Three conflicts exist between the inputs to this document. All are recorded rath
 One genuine gap, stated rather than papered over:
 
 - **Metadata cold start is unspecified.** Every read path in §4 assumes the operation, view and manifests are already local. Nothing describes how a node that has never seen a repo obtains them — the initial fill, its single-flight behaviour, its progress reporting, or what `GetSnapshot` returns while it is in flight. E1′ measures catch-up for a warm node, not bootstrap. This needs a decision before implementation; the likely shape is the same single-flight pattern as blobs, with `GetSnapshot` returning a retryable `NOT_READY` rather than an empty view.
+
+### Scope change after drafting
+
+The read-write mount was added after this document was drafted, on the operator's instruction that the MVP must be a usable version-control working copy. Nothing was removed. Consequences, all reflected above: §3 moved the VFS write path from out-of-scope to in-scope; §4.8 and D-11 are new; I27–I31, AC23–AC27 and D32–D37 are new; §11 no longer defers live reflection. The change opened two questions, recorded as OQ-6 and OQ-7.
