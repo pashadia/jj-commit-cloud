@@ -1,6 +1,6 @@
 # Commit cloud — requirements
 
-**Purpose.** This is the requirement baseline for the multi-tier commit cloud. It records what the operator asked for, in the operator's terms, so that it can be read and corrected independently of any design. The design proposal (`multi-tier-commit-cloud.md`) must satisfy it; where they disagree, this document wins until the operator changes it.
+**Purpose.** This is the requirement baseline for the multi-tier commit cloud. It records what the operator asked for, in the operator's terms, so that it can be read and corrected independently of any design. Any design of this system must satisfy it; where a design and this document disagree, the document wins until the operator changes it.
 
 **Status.** No design decision is ratified. This document is not a decision record: it is the set of requirements the decisions have to serve. A requirement marked **(derived)** was not stated word for word; it follows from something that was, and is flagged so it can be struck.
 
@@ -40,18 +40,18 @@ Other people's work flows the other way: up to the authority, then back down to 
   - *Unique.* A workspace is named for the node that owns it, so two nodes cannot name the same workspace. Copying a workspace to another node creates a **new** workspace at a commit, not a second writer of the same one. A node's identity is generated once, is stable across restarts, and must not be copied with its data; a duplicate identity is a configuration error that the node should refuse rather than half-support.
   - *Pointer.* The view maps a workspace name to a working-copy commit. There is no lease, fence or ownership anywhere in the repository, and none is added. A node admits one writer per workspace at a time; that admission is in-process and is the only lock in the system.
   - *Why the rule exists.* If two nodes did share a name, `merge_wc_commit` would keep one side silently — the operation that finished first — and the other client's working copy would be reported stale. Nothing would be lost: the losing commit stays in the graph. The failure is merely confusing, so it is designed out rather than handled.
-- **RQ-13** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(Contradicts the proposal's D18, which makes the id opaque and server-assigned. Today's code lets the client pass `repo_id` and falls back to server assignment: `lib/src/cc_backend.rs:55-64`.)*
+- **RQ-13** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(This replaces the opaque, server-assigned id: today the client may pass `repo_id` and the server otherwise assigns one, `lib/src/cc_backend.rs:55-64`.)*
 
 ## 4. Reads
 
 - **RQ-14** A sequence of reads sees **one consistent state** of the repository. When a client starts reading — a directory listing, then the files in it — it names the operation it is reading from, and every call in that sequence is answered from that operation. The operation is **held** for the duration, so garbage collection cannot remove it underneath the reader while the sequence is running. *(A CLI command already does this implicitly: it reads one state from start to finish. The VFS has no command boundary, so it holds per open handle instead.)*
 - **RQ-15** If that state is too old to serve, the call fails with an explicit retryable "stale" error. It never silently mixes two states. *(The failure being ruled out: `stat` reports 100 bytes, `read` returns 90 with no error, because a commit landed between the two calls.)*
-- **RQ-16** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; this design assumes it is shared.)*
+- **RQ-16** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; the rest of these requirements assume it is shared.)*
 - **RQ-17** Blobs are fetched lazily. A read of a blob that is not local blocks up to a timeout and then returns a retryable error.
 - **RQ-18** `stat` never lies. Size, mode and mtime come from metadata, never from fetching content.
 - **RQ-19** Attributes are deterministic: given one operation, size, mtime, executable bit and directory ordering always have the same values. *(Agreed as stated. Deferred: which timestamp an mtime carries — content time, commit time or checkout time — is a policy choice, not part of this requirement.)*
 - **RQ-20** Prefetching is optional and deferred. If a node implements it, it may warm its cache with content it used before, but it must never fetch every blob of an operation on a large repository.
-- **RQ-21** A **cache hint** (the design calls it a *pin*) keeps a blob from being evicted while a client is reading it. It is scoped per user and per client, expires on its own, and is **never** an input to garbage collection. It is unrelated to the hold in RQ-14, which protects an operation rather than a blob.
+- **RQ-21** A **cache hint** (also called a *pin*) keeps a blob from being evicted while a client is reading it. It is scoped per user and per client, expires on its own, and is **never** an input to garbage collection. It is unrelated to the hold in RQ-14, which protects an operation rather than a blob.
 
 ## 5. Writes, acknowledgements and durability
 
@@ -101,7 +101,7 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-53** Propagation runs on a separate clock: on idle, on `fsync`, or every 5–30 s. Runtime-configurable. Reaching the authority is eventual and is not the VFS's concern.
 - **RQ-54** Uncommitted bytes live at the node in a mutable staging area; they become content-addressed blobs at snapshot time.
 - **RQ-55** `fsync` on the mount is satisfied by local durability at the node.
-- **RQ-56** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks. The proposal currently specifies none of these.
+- **RQ-56** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks.
 
 ## 10. Protocol and transport
 
@@ -157,7 +157,7 @@ Stated as out of scope now, without prejudice to later phases:
 | OQ-7 | What "tracking a bookmark" means: a read-only view that moves with the bookmark, or the workspace itself following it | A view can change under a reader; a working copy cannot |
 | OQ-8 | Mount layout: is the mount root the working copy, or does the mount expose a directory of workspaces each containing one? | Decides path resolution in the VFS, inode identity across workspaces, and where the CLI expects `.jj`. It must be settled before the write protocol is specified |
 | OQ-9 | Does the node keep a separate workspace registry (`ListWorkspaces`, `CheckWorkingCopyChanges`), or is a workspace simply an entry in the view with no extra bookkeeping? | With node-scoped names the view already answers "which workspaces exist"; a separate registry would only add `CheckWorkingCopyChanges`. Dropping it removes a surface nobody has asked for |
-| OQ-10 | Does the operation log belong in the commit cloud, or does each machine keep its own while only commits and bookmarks are shared? | The design's convergence story — pushing an operation, heads compare-and-swap, parked operations — assumes a shared op log. Keeping it local turns the commit cloud into a content store with a remote, which is git's shape, and changes the shape of most of the write path |
+| OQ-10 | Does the operation log belong in the commit cloud, or does each machine keep its own while only commits and bookmarks are shared? | Pushing an operation, the heads compare-and-swap and parked operations only exist if the log is shared; keeping it local turns the commit cloud into a content store with a remote, which is git's shape, and changes most of the write path |
 | OQ-11 | Does the shared log carry a working-copy pointer for every workspace, or only bookmarks and heads, with each workspace's pointer local? | With node-scoped workspace names the pointers can never collide, so the merge question is moot and either choice is safe. What remains is growth: one entry per workspace in every operation's view. If that becomes material, pointers move out of the shared view |
 
 ---
