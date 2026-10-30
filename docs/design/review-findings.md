@@ -46,6 +46,8 @@
 | **B17** | **Two required sections are missing.** The operator asked for a reading guide and for terms defined before use; the rewrite dropped the guide, and "custody", "fence", "provisional" and "dirty" appear before their definitions. `[verified]` | R2 | An explicit requirement, and the operator's original complaint was opacity | edit |
 | **B18** | **Pins cannot change on a live subscription.** `Subscribe` takes one unary request and returns a stream, but the pin set must change per read sequence, and the cap drops the oldest pin. `[verified]` | R3 | The blob-pin path has no wire, though AC3 and the eviction diagram depend on it | design |
 
+| **B19** | **The design invents a workspace lease and fence that jj does not have, and that contradicts jj-lib's merge.** `merge_wc_commit` (`lib/src/repo.rs:1650-1677`) keeps one side deterministically (earliest operation end time) and never records a conflict; there is no lease, fence or epoch anywhere in jj-lib or the CLI, and `publish()` takes no lock against concurrent appends. The design's `FENCED` / `LEASE_SUPERSEDED` / `lease_ttl` cluster therefore describes behaviour the underlying library will not produce | code review |
+
 ## Part C — non-blocking
 
 | Id | Finding | Sources |
@@ -125,5 +127,7 @@
 | kimi-k3 | `c870dfbc-3db4-4277-8a4b-6a85ed3a1a23` |
 | glm-5.3 | `b8d15ba5-194e-4615-8bec-b46c6a8aa257` |
 | deepseek-v4.1-flash | `3e44ff01-72e7-40e5-92e0-4a4aea796554` |
+
+jj-lib source for verification: `/home/bogdan/work/google-jj/jj-upstream` (v0.46.0, `Cargo.toml:17`).
 
 Retained under `~/.pi/agent/sessions/--home-bogdan-work-google-jj--/subagent-artifacts/`.
