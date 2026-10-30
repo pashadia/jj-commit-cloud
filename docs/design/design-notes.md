@@ -2,7 +2,7 @@
 
 **What this is.** The first design document and its review are being deleted. This file keeps the parts of them that are not tied to that document's structure: the option space, the trade-offs that were argued once, invariants worth testing in any design, a failure checklist, and the defects that must not recur. It is an input to the next design, not a design, and nothing in it is ratified.
 
-**What was deleted, and why.** `multi-tier-commit-cloud.md` described a system with per-workspace leases, server-assigned repository ids, and a shared log that grew with every snapshot. Three later requirements removed its footings: workspaces are pointers with node-scoped names (RQ-3-7), identity is authority-scoped and chosen (RQ-3-8), and local history is separate from published history (RQ-5-3). With those gone, the document's fences, `LEASE_SUPERSEDED` path, origin-switch rules and per-snapshot publication all described machinery that no longer exists.
+**What was deleted, and why.** `multi-tier-commit-cloud.md` described a system with per-workspace leases, server-assigned repository ids, and a shared log that grew with every snapshot. Three later requirements removed its footings: workspaces are pointers with node-scoped names (RQ-3-7), identity is authority-scoped and chosen (RQ-3-8), and local history is separate from propagated history (RQ-5-3). With those gone, the document's fences, `LEASE_SUPERSEDED` path, origin-switch rules and per-snapshot publication all described machinery that no longer exists.
 
 ---
 
@@ -96,7 +96,7 @@ These are properties of the problem rather than of the deleted design. Each shou
 | No acknowledgement debounce | Bursts are accepted; coalescing happens only after the acknowledgement |
 | Serialised appends | One operation is created at a time per repository per node |
 | Append-only | An accepted operation is never rewritten, re-identified or reordered |
-| Local versus published | Local and shared history advance on different clocks |
+| Local versus propagated | Local and shared history advance on different clocks |
 | Role per repository | One node may be authority for A and replica for B with no leakage |
 
 Two invariants from the old set are **dropped, not deferred**: anything phrased as a fence or a lease (jj has none — see §6), and "a node adopts the upstream's epoch on push", which cannot hold without defining which side is authoritative for the counter.
@@ -145,7 +145,7 @@ Verified against jj-lib 0.46.0 at `/home/bogdan/work/google-jj/jj-upstream`.
 - **Operation ids hash the view id, the parent ids, the metadata (timestamps, hostname, username, description, workspace name) and commit predecessors** (`core/src/op_store.rs:294-321`, `:356-373`). Two machines cannot produce the same id, and an operation names its parents permanently.
 - **Id width is backend-dependent, not fixed.** `Backend::commit_id_length()` is per backend: the git backend returns the repository's object hash length (`lib/src/git_backend.rs:1086-1088`), so 20 bytes for SHA-1 and 32 for SHA-256, and the simple backend uses 64-byte BLAKE2b (`lib/src/simple_backend.rs:70`). Change ids are 16 bytes in both (`lib/src/git_backend.rs:97`, `lib/src/simple_backend.rs:71`). Any key mapping must therefore be width-agnostic. The operator reports that SHA-256 object ids are being worked on upstream; the timeline is OQ-14.
 - **Conflicts live in the tree.** A commit can carry a conflicted tree, materialised as conflicted content; resolving it is an ordinary edit and the next snapshot records the result. Bookmarks have a separate conflict representation (a ref target with several targets). The two are different mechanisms and should not be conflated.
-- **Operations are local state by design**: "Operations and views are not meant to be exchanged between repos or users; they represent local state and history" (`core/src/op_store.rs:285-286`). Publishing them over the wire is something a commit cloud adds, not something jj supports.
+- **Operations are local state by design**: "Operations and views are not meant to be exchanged between repos or users; they represent local state and history" (`core/src/op_store.rs:285-286`). Propagating them over the wire is something a commit cloud adds, not something jj supports.
 - **Pruning operations is real and manual**: `OpStore::gc` "prunes unreachable operations and views" (`core/src/op_store.rs:448-455`), called by `jj util gc` together with the backend GC (`cli/src/commands/util/gc.rs:63-68`). The age floor is a hardcoded 14 days (`cli/src/commands/util/gc.rs:56`) and `--expire` accepts only `now`. There is no top-level `jj gc`.
 - **Reachable operations are never expired**, so the op log is unbounded in principle; the age floor applies only to operations unreachable from the current head. No compaction, rotation or operation-count limit exists.
 - **The operation log is jj's reflog**: the commit index is built from every reachable operation's references *and* its predecessor map (`lib/src/default_index/store.rs:268-278`, `core/src/operation.rs:141-154`), so a commit referenced only by an old operation stays alive. `jj op abandon` plus `jj util gc` is how that history is cut.
