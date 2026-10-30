@@ -179,7 +179,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 7. One file per object in v1; packing is deferred with its trade-offs written down.
 8. Snapshots are immutable; revisions evolve; bookmarks can be immutable; the authority enforces it.
 9. Staleness: metadata always local, blobs best effort. A client's view is its own commit and never moves underneath it; only collection can end it, and that is an explicit error.
-10. Clients learn of new operations by server push.
+10. Clients are entitled to learn of new operations without remounting; the mechanism, polling included, is OQ-15.
 11. Offline: accept writes and reconcile later, after being shown the drawbacks.
 12. Read-write, not read-only. The debounce sits on the snapshot path, never on the acknowledgement path.
 13. Latency targets: metadata near-instant, blobs best effort; concrete numbers are placeholders.
@@ -192,7 +192,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 20. Concurrent writers on one workspace: impossible by construction, because a workspace belongs to one node and that node admits one writer at a time.
 21. A client reads its own commit, pinned for the sequence; the pointer moves only when the client moves it.
 22. Partitioned writes are accepted and reconciled; the drawbacks were explained and accepted.
-23. "In sync" means divergent trees eventually replicate; the VFS is notified by push.
+23. "In sync" means divergent trees eventually replicate, and the VFS learns of it without remounting.
 24. Metadata is durable with explicit acknowledgements; blobs are eventually consistent.
 25. Prefetch is per-node configurable; never all blobs of a head.
 26. Dirty data is never evicted.
@@ -201,7 +201,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 29. Repository identity is chosen by the creator and scoped to the authority (`<authority>/<owner>/<name>`); the authority enforces uniqueness, and transport is not part of it. (The earlier answer, "server-assigned id", is superseded.)
 30. Identity is delegated and propagated; replicas refuse unauthorized clients; per-user namespaces.
 31. Deliverable shape: one design document plus a deferred-decisions section, in `docs/design/`.
-32. Pins are subscription-stream based and order eviction only; GC ignores them.
+32. Eviction and collection are unrelated: eviction is a local cache rule (RQ-7-5) and never an input to collection (RQ-7-4).
 33. fsync: satisfied by local durability at the node, not by the authority.
 34. Operation visibility: metadata immediately, blobs lazily, blocking read then retryable error.
 35. Offline authorization: undecided, four options documented with a recommendation.
