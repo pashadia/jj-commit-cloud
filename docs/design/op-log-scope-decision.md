@@ -1,385 +1,315 @@
-# How much of the operation log must be shared?
+# Operation-log scope: five configurations and the decisions they require
 
-**A decision brief. It contains no decisions — it asks for them.**
+Status: open. This document records facts about jj's current model, enumerates
+five configurations for how much of the operation log is replicated, and lists
+the decisions that select between them. It does not recommend one.
 
-Status: open. Written because the answer is a product decision, not an
-engineering one, and because three separate engineering questions are currently
-blocked on it.
-
----
-
-## 1. Why this document exists
-
-We are building a system in which a jj repository lives behind a shared server,
-and several machines — laptops, a shared office machine, a build server — work
-on it. One question has never been settled by anyone with the authority to
-settle it:
-
-> **How much of each machine's local repository state must be visible to the
-> other machines?**
-
-Everything downstream depends on the answer: how much data the server stores,
-how much bandwidth a developer consumes, what a colleague can see of your work
-before you publish it, whether work continues when the server is down, what
-"undo" means, and what support can investigate after an incident.
-
-It is tempting to treat this as an implementation detail and let engineers pick
-a sensible default. That is what has happened so far, and it is why the design
-keeps stalling: each engineer assumes a different answer, and the answers are
-not compatible.
+Audience: engineers who can answer the decisions in §6. Nothing here is a
+proposal for a specific implementation.
 
 ---
 
-## 2. What jj does today, and why it is the way it is
+## 1. Scope
 
-jj records every change to a repository as an **operation**. Editing a file,
-moving a bookmark, creating a commit, rebasing — each is an operation. The
-operation log is what makes `jj undo`, `jj op log` and recovery possible.
+The system under discussion puts a jj repository behind a shared server and
+connects several machines to it. One parameter is undecided: **which parts of
+each machine's repository state are replicated, and to whom.**
 
-Two properties of that log create the difficulty.
+The parameter is not free. It determines the server's data model, the wire
+format, the storage growth rate, what `jj undo` can mean, whether local work
+survives server unavailability, and what must be migrated if the answer
+changes later. §7 lists what currently depends on it.
 
-### 2.1 The log is deliberately local
+---
 
-jj's own source says it plainly:
+## 2. Terms
+
+| Term | Meaning |
+|---|---|
+| **Operation** | jj's record of one change to repository state. Contains a view id, parent operation ids, metadata, and a commit-predecessor map. |
+| **View** | A complete snapshot of the repository's pointers after an operation. Content-addressed, immutable. |
+| **Op head** | An operation with no successor. Loading a repository resolves all heads; more than one means divergence. |
+| **Working-copy pointer** | The commit a named workspace has checked out. Stored in the view (`wc_commit_ids`). |
+| **Ref target** | A bookmark's or tag's value, possibly conflicted: `Merge<Option<CommitId>>`. |
+
+---
+
+## 3. Facts about the current model
+
+### 3.1 The operation log is local by design
 
 > "Operations and views are not meant to be exchanged between repos or users;
 > they represent local state and history."
 > — `core/src/op_store.rs:282-286`
 
-This is not an oversight. It is why the log can contain anything, including
-half-finished work and machine-specific details, without those becoming someone
-else's problem.
+Consequences that follow directly:
 
-### 2.2 Each operation points at a complete view
+- There is no wire format for operations, and no versioning or authentication
+  for one. A replicated log is new work, not a configuration change.
+- Nothing in an operation identifies a repository, a client, or a position in a
+  sequence. `ViewId` and `OperationId` are content hashes that include local
+  state (`OperationMetadata.hostname`, `workspace_name`, wall-clock time), so
+  two machines produce different operation ids for the same logical change.
 
-An operation does not record "this changed". It records the **whole state of the
-repository's pointers** after the change — called a view — and the operation
-points at it.
+### 3.2 An operation references a complete view, not a diff
 
-That has a consequence which is easy to miss and which shapes everything that
-follows: **a view cannot be partly shared.** It is one object. If you share an
-operation, you share all of its view, including the parts that only matter on
-the machine where it was created.
+Each operation stores `view_id` and points at a stored view object
+(`core/src/op_store.rs:294-320`). The view is the whole state of the
+repository's pointers, not the delta from its parent. `jj op diff` computes a
+difference by comparing two views.
 
-### 2.3 Every field of a view
+The operation object does carry one diff-like field — `commit_predecessors`,
+which maps rewritten commits to their predecessors — but it is not a view delta.
 
-| # | Field | Type | What it holds |
+Direct consequence: **a view cannot be partially replicated.** Replicating an
+operation replicates all of its view.
+
+### 3.3 The seven view fields
+
+`core/src/op_store.rs:172-194`:
+
+| # | Field | Type | Contents |
 |---|---|---|---|
-| 1 | `head_ids` | set of commit ids | Every commit that is currently visible. At least one. |
-| 2 | `local_bookmarks` | name → ref target | Local bookmark names and where they point. A target may be conflicted. |
-| 3 | `local_tags` | name → ref target | Local tags, same shape. |
-| 4 | `remote_views` | remote → {bookmarks, tags} | The last known position of each remote's bookmarks and tags, plus whether each is tracked. A memory of what a server said, not an authority. |
-| 5 | `git_refs` | ref name → ref target | Mirrors of the underlying Git repository's refs. |
-| 6 | `git_heads` | workspace → ref target | The commit each workspace's Git `HEAD` points at. |
-| 7 | `wc_commit_ids` | workspace → commit id | The commit that each workspace has checked out. |
+| 1 | `head_ids` | `HashSet<CommitId>` | All visible head commits; at least one. |
+| 2 | `local_bookmarks` | `BTreeMap<RefNameBuf, RefTarget>` | Local bookmark names and targets. Targets may be conflicted. |
+| 3 | `local_tags` | `BTreeMap<RefNameBuf, RefTarget>` | Local tags, same shape. |
+| 4 | `remote_views` | `BTreeMap<RemoteNameBuf, RemoteView>` | Last known position of each remote's bookmarks and tags, plus a tracked/untracked state per ref. A remembered state, not an authority (`docs/bookmarks.md:63-67`). |
+| 5 | `git_refs` | `BTreeMap<GitRefNameBuf, RefTarget>` | Refs mirrored to or from an underlying Git repository. |
+| 6 | `git_heads` | `BTreeMap<WorkspaceNameBuf, RefTarget>` | The commit each workspace's Git `HEAD` points at. |
+| 7 | `wc_commit_ids` | `BTreeMap<WorkspaceNameBuf, CommitId>` | The commit each workspace should have checked out. The working-copy directory holds which commit is actually checked out. |
 
-All seven are stored together, as one view, for every operation.
+`RefTarget` is `Merge<Option<CommitId>>` (`core/src/op_store.rs:63-64`), so a
+bookmark can hold several candidate commits instead of one.
 
-### 2.4 The view mixes three different kinds of thing
+### 3.4 The fields fall into three categories
 
-This is the root of the confusion, stated plainly:
+This grouping is analytic; it is not in the source.
 
-- **Shared content pointers** — fields 1–3. Where the repository's history and
-  named refs actually are. Other people would recognise these.
-- **Mirrors of other systems** — fields 4–5. A local cache of what a remote or
-  a Git repository last said. Useful to the machine that holds it, meaningless
-  to anyone else.
-- **Per-machine working state** — fields 6–7. Which commit *this* workspace is
-  looking at. Only meaningful on the machine where that workspace lives.
+| Category | Fields | Property |
+|---|---|---|
+| Repository content pointers | 1–3 | Describe where history and named refs are. Meaningful to any machine with the commits. |
+| Mirrors of another system | 4–5 | Cache what a remote or a Git repository last reported. Meaningful only as a cache. |
+| Per-machine working state | 6–7 | Identify which commit a named workspace is looking at. Meaningful only on the machine hosting that workspace. |
 
-A single operation typically changes one field from each group: you edit a file
-(the working-copy commit, field 7, changes and a new commit appears, field 1),
-and perhaps a bookmark moves (field 2). **The parts you might want to share and
-the parts you certainly do not are welded together in the same object.**
-
----
-
-## 3. The space between "mine" and "everyone's"
-
-The two extremes are easy to describe.
-
-- **Everything local.** Each machine has its own log. Sharing happens the way it
-  does with Git: you push commits and bookmark positions somewhere, and others
-  fetch them. Nothing else moves.
-- **Everything shared.** One log at the server. Every operation from every
-  machine goes up, comes down to everyone, and any client can point at any
-  other client's head, workspace or snapshot. `jj op log` is the same
-  everywhere.
-
-Between them there is a wide range, and most real systems sit in the middle.
-The rest of this document describes five positions on that range. They are
-**not** implementation alternatives of one idea; they are different products.
-
-```
-  local only                                              fully shared
-      │                                                        │
-   ┌──┴──┐      ┌────────┐      ┌────────┐      ┌────────┐   ┌──┴──┐
-   │  1  │──────│   2    │──────│   3    │──────│   4    │───│  5  │
-   └─────┘      └────────┘      └────────┘      └────────┘   └─────┘
-  today's       shared        + where each      + the        one log,
-  jj            content       workspace is      history of   everyone
-                and refs      (tips only)       what was     sees all
-                                                published
-```
+A single snapshot transaction changes fields from more than one category: the
+working-copy commit changes (category 3) and a new commit becomes a head
+(category 1). This is the mechanical reason the replication decision is not a
+clean split: the categories are interleaved in one object per operation.
 
 ---
 
-## 4. The five positions
+## 4. The configurations
 
-Each position says: what is shared, what a user gains, what it costs, and where
-it stops working.
+Five configurations, ordered by how much state is replicated. For each: what is
+replicated, what it makes possible, what it costs, and what it breaks.
 
-### Position 1 — Everything local
+### Option 1 — Nothing replicated; collaboration via a Git remote
 
-**What is shared:** nothing except what you deliberately push to a Git remote.
+Replicated: commits and refs, by explicit push, as with any Git remote. The
+operation log never leaves the machine.
 
-**What a user gains:** nothing new. This is jj as it exists today.
+- **Enables:** nothing beyond jj's current behaviour with a Git remote.
+- **Storage at the server:** proportional to pushed history only.
+- **Breaks:** no visibility of unpublished work; no shared history of local
+  actions; no way to reconstruct what a lost machine was doing.
+- **Available today:** yes — this is jj with a Git backend.
 
-**What it costs:** nothing. No server state beyond a Git remote.
+### Option 2 — Commits and refs replicated; operation logs local
 
-**Where it stops:** a colleague cannot see your work until you push, and even
-then cannot see where your workspace is pointing, what you have not published,
-or what you were doing ten minutes ago. Support cannot reconstruct what happened
-on a machine that was lost.
+Replicated: commit objects, file blobs, and bookmark targets. Each machine keeps
+its own operation log, containing its own snapshots and pointer moves.
 
-**Who this suits:** teams that are happy with Git's collaboration model and want
-the server to be a dumb store.
+- **Enables:** push and fetch without an intermediate Git repository; other
+  machines see published work with no extra step. `jj undo` continues to operate
+  on local history only.
+- **Storage at the server:** proportional to published commits, not to save
+  frequency. A day of editing that produces one commit costs one commit.
+- **Bandwidth:** on publish, the blobs and trees not already present.
+- **Breaks:** unpublished work is invisible; loss of a machine loses everything
+  not yet published; no cross-machine history; an operation id from another
+  machine cannot be resolved.
+- **Implementation status:** this is the shape jj already has, with a Git remote
+  replaced by the server. The ref export/import path exists
+  (`lib/src/git.rs:399-422` for the ref-name mapping); a native transport is new
+  but contains no new model.
 
----
+### Option 3 — Option 2 plus a replicated working-copy pointer per workspace
 
-### Position 2 — Shared content and refs
+Replicated: commits, blobs, bookmark targets, and one small record per
+workspace: "workspace `W` of user `U` is at commit `C`". `C` may be unpublished.
 
-**What is shared:** commits, file contents, and bookmark positions. The server
-holds the repository; each machine keeps its own operation log.
+- **Enables:** other machines can see where each workspace is, including
+  uncommitted work; a lost machine's checked-out commit is known to the server;
+  the server has a retention root for unpublished work.
+- **Storage at the server:** proportional to the rate at which workspace
+  pointers move — roughly once per debounce interval while a workspace is
+  actively edited, per workspace, not per file save.
+- **Bandwidth:** one small record per pointer movement.
+- **Exposes:** the existence, location and current commit of each workspace.
+  Not file contents, unless the commits are replicated anyway.
+- **Breaks:** the path by which a workspace reached its current commit is still
+  not recorded; intermediate states are still unrecoverable.
+- **Implementation status:** new. A replicated pointer is not an operation, so it
+  needs its own record type, its own merge rule (pointer conflicts have no
+  content merge), and a decision about whether the authority may ever move a
+  pointer.
 
-**What a user gains:** push and fetch, but without a Git remote in the middle.
-A colleague can see everything you have published, immediately, without you
-running a separate synchronisation step.
+### Option 4 — Option 3 plus a replicated log of observable changes
 
-**What it costs:** storage proportional to **published** work, not to how often
-people save. An afternoon of typing that ends in one commit costs one commit.
+Replicated: everything in option 3, plus an ordered record of changes another
+machine could observe: a commit becoming reachable, a bookmark or tag target
+changing, a ref deletion. Local-only changes (a pointer move with no commit
+change, an intermediate amendment) produce no record.
 
-**Where it stops:** nobody sees work in progress. If your laptop dies between
-publishing, the unpublished work is gone. There is no shared history of saves,
-so no cross-machine undo and no way to answer "what did this look like an hour
-ago on that machine".
+- **Enables:** a shared, ordered history of published work; answering "what
+  changed in this bookmark, and when" without asking the machine that changed
+  it; recovery of published work across machines.
+- **Storage at the server:** proportional to publishing activity, not to save
+  activity, plus the pointer records from option 3.
+- **Breaks:** a shared history of intermediate saves. An amendment that is
+  overwritten before it becomes reachable is not recorded anywhere.
+- **Implementation status:** new. Requires a second record format, a projection
+  from local operations to records, and a durable cursor marking how far the
+  projection has advanced. jj's ref merge (`core/src/refs.rs:95-118`) supplies
+  the conflict semantics for the ref portion; the pointer portion inherits
+  option 3's problem.
 
-**This is roughly Git's model with a better server.** It is the cheapest
-position that still feels collaborative.
+### Option 5 — The whole operation log replicated
 
----
+Replicated: every operation from every machine, including every snapshot and
+every pointer move. One log, resolved identically everywhere.
 
-### Position 3 — Shared content, refs, and where each workspace is
+- **Enables:** every operation id resolves on every machine; `jj undo` can
+  revert an operation performed elsewhere; any snapshot is available with its
+  refs; `jj op log` is identical on all machines.
+- **Storage at the server:** proportional to the aggregate rate of *saving*.
+  Two consequences that are easy to miss:
+  - Views are content-addressed, so identical views store once — but
+    consecutive snapshots are not identical, because the working-copy pointer
+    differs. Deduplication does not reduce the per-save cost.
+  - The operation object is small; the view is the bulk of the payload.
+  - Placeholder arithmetic: one workspace saving once every 1–3 seconds for
+    8 hours produces 10,000–30,000 operations per day, assuming continuous
+    activity and no debouncing. Real rates depend on the snapshot policy.
+- **Breaks:** operation ids contain local metadata, so a replicated log is not
+  deduplicated across machines for identical logical changes. Concurrent
+  operations must be merged on receipt; the merge rule for working-copy pointers
+  is a silent tie-break, not a content merge (§5). No local work is visible to
+  other machines unless the server accepted it.
+- **Implementation status:** new, and the largest. `OpStore` and `OpHeadsStore`
+  are traits, so a network-backed implementation is possible; the stock `jj`
+  binary registers only built-in implementations (`cli/src/cli_util.rs:4129`),
+  so this requires either a custom binary or an upstream change.
 
-**What is shared:** everything in position 2, plus one small fact per workspace:
-"the `dev` workspace on Alice's laptop is at commit X". The commit may be
-unpublished.
+### Modifiers independent of the option
 
-**What a user gains:** you can see what colleagues are working on right now,
-including work they have not published. You can point at their commit. If their
-machine dies, the server knows which commit was checked out, so nothing is lost
-that had been saved.
-
-**What it costs:** a small record per workspace per change of commit — not per
-file save. Roughly, one small message per handful of seconds while someone is
-actively editing, per workspace. (Exact volume is an engineering measurement,
-not an assumption.)
-
-**What it exposes:** that a person is working, where, and on which commit. Not
-the file contents unless they are also published.
-
-**Where it stops:** you can see the current position but not the path that led
-there. "How did this file get like this, one save at a time?" still cannot be
-answered from the server.
-
-**This is the smallest position that makes work-in-progress visible.** It is
-also the first one where privacy becomes a real question rather than a
-theoretical one.
-
----
-
-### Position 4 — Shared observable history
-
-**What is shared:** position 3, plus a record of every change that others could
-see: a commit becoming reachable, a bookmark moving, a ref being deleted. Not
-your private pointer moves, not the intermediate versions of a commit you were
-still writing. Only what changed something someone else could have observed.
-
-**What a user gains:** a shared history of published work — who published what,
-in what order, and what the repository looked like at each step. Cross-machine
-recovery becomes possible for published work. "What changed in this bookmark
-yesterday?" is answerable without asking the person who changed it.
-
-**What it costs:** a second log to maintain and to keep consistent with the
-local one. Storage grows with publishing activity rather than with typing. More
-machinery: two formats, two versions, a rule for reconciling them after a crash.
-
-**Where it stops:** it still does not give you a shared history of *saves*. If
-someone wants to know what a file looked like at 14:03 before it was committed,
-positions 1–4 cannot tell them, because that intermediate state was never
-shared.
-
-**This is the first position that is genuinely a new capability** rather than a
-cheaper way of doing something Git already does.
-
----
-
-### Position 5 — One log, fully shared
-
-**What is shared:** every operation, from every machine, including every save
-and every working-copy pointer move. Every client holds the same log and can
-reference any other client's head, workspace or snapshot, immediately.
-
-**What a user gains:** a single, complete, consistent history of everything that
-happened anywhere — every save, every pointer move, every ref change — visible
-to everyone, with `jj undo` able to undo an action performed on another machine.
-
-**What it costs:** the log grows at the aggregate rate at which people *save*,
-not at which they publish. Every save from every workspace of every developer is
-written to the server and delivered to every interested client. As a placeholder
-estimate: an active developer saving once every few seconds for a working day
-produces on the order of 10,000–30,000 operations a day, and each carries a full
-view — a small object, but one per save, per person. Storage, delivery and
-retention all scale with that number.
-
-**What it exposes:** everything. Every save, every half-finished thought, every
-machine name, every workspace. Privacy becomes a design constraint rather than a
-footnote.
-
-**Where it breaks:** it makes the server a hard dependency for local work. If
-the server is unreachable, a developer cannot save in a way that other machines
-will ever see. It also makes every concurrent action a potential merge of
-repository state, including the per-machine parts — which are exactly the parts
-that have no meaningful merge.
-
-**This is the only position in which "any snapshot is immediately available with
-all the local refs" is literally true.** It is also the most expensive and the
-most invasive, by a wide margin.
+- **Retention.** Any replicated history may be retained indefinitely, for a
+  window, or until an explicit prune. Retention determines what "the server has
+  it" means, and it is a separate decision from what is replicated.
+- **Scope.** Replicated state may be visible to an organisation, a team, or named
+  users. Scope affects exposure, not storage.
+- **Encryption.** End-to-end encryption is incompatible with server-side
+  reasoning over history (deduplication by content, conflict detection,
+  retention by reference).
 
 ---
 
-### Modifiers that apply to any position
+## 5. A merge property that constrains options 3–5
 
-- **Retention.** Any shared history can be kept forever, or for a window, or
-  until someone prunes it. Deciding *how long* is separate from deciding *what*
-  is shared, but it decides what "the server has it" actually means.
-- **Scoping.** Shared state can be visible to the whole organisation, to a
-  team, or to named people. Scoping does not reduce storage; it reduces
-  exposure.
-- **Encryption.** Content can be encrypted at rest or end to end. End-to-end
-  encryption and "the server can answer questions about history" are mutually
-  exclusive.
+When two views disagree about a working-copy pointer, jj resolves the
+disagreement by keeping one side. `merge_wc_commit` keeps `self_id` unless one
+side is absent or a trivial merge applies (`lib/src/repo.rs:1650-1677`); the
+"self" side is the earlier operation by end time, because divergent heads are
+sorted by end time before merging (`lib/src/op_heads_store.rs:154`). There is no
+conflict object and no user prompt for a pointer.
 
----
+Relevant to this decision: any option that replicates working-copy pointers
+(options 3–5) replicates a quantity that has a **tie-break but no merge**. Two
+machines editing the same workspace concurrently do not produce a mergeable
+state; they produce a winner determined by timing.
 
-## 5. Trade-offs, side by side
-
-| | 1 local | 2 content+refs | 3 + tips | 4 + observable history | 5 full log |
-|---|---|---|---|---|---|
-| Colleagues see published work | after a push | yes | yes | yes | yes |
-| Colleagues see work in progress | no | no | **yes** | yes | yes |
-| Shared history of saves | no | no | no | no | **yes** |
-| Undo someone else's action | no | no | no | partly | **yes** |
-| Survives laptop loss | only published | only published | since last save | since last publish | since last save |
-| Works when server is down | yes | mostly | mostly | reduced | **no** |
-| Storage grows with | publishing | publishing | editing | publishing | **saving** |
-| Privacy exposure | minimal | minimal | location + commit | + history | **everything** |
-| New engineering | none | moderate | moderate | **substantial** | large |
-| Answerable to "who changed this?" | no | partly | partly | yes | yes |
+Ref targets behave differently: `merge_ref_targets` is ancestry-aware and can
+represent a genuine disagreement as a conflicted bookmark
+(`core/src/refs.rs:95-118`).
 
 ---
 
-## 6. The questions we need answered
+## 6. Decisions required
 
-Each question is a product question. The parenthetical notes say which
-positions answer "yes".
+Each item is a question about what must be replicated. The listed options are
+the configurations from §4; the note after each answer states the technical
+consequence.
 
-**Q1. Must a colleague be able to see your work in progress, before you
-publish it?**
-No → position 2. That you are working, and where → position 3. The content too
-→ position 5. *(3, 4, 5)*
+**D1. Is the working-copy pointer replicated?**
+No → options 1–2. Yes → options 3–5, and the tie-break in §5 becomes part of
+the system's behaviour.
 
-**Q2. Must someone be able to undo an action performed on a different machine?**
-No → position 2 or 3. For published actions → position 4. For anything,
-including saves → position 5. *(4 partly, 5 fully)*
+**D2. Is unpublished work visible to other machines?**
+Its existence and location → option 3. Its contents → option 5 (or option 3
+plus content replication of the tip commit). Not at all → options 1–2.
 
-**Q3. Is the history of intermediate saves a product feature — something a user
-or support could ask for — or is published history enough?**
-Enough → positions 1–4. Required → position 5 only. *(5)*
+**D3. Is a history of intermediate saves required, as opposed to a history of
+published changes?**
+Published only → options 1–4. Every save → option 5.
 
-**Q4. If a laptop is lost, what is the maximum acceptable loss?**
-Nothing published → positions 2–5. Nothing since the last save → positions 3
-and 5. Nothing at all, including unsaved buffer contents → no position; that is
-an editor problem. *(3, 5)*
+**D4. Must an operation id from one machine resolve on another?**
+No → options 1–4. Yes → option 5.
 
-**Q5. Must a developer be able to keep working when the server is unreachable?**
-Yes → positions 1–4, with a local queue. No → position 5 is acceptable.
-*(1–4)*
+**D5. Must `jj undo` be able to revert an action performed on another machine?**
+No → options 1–4. Yes → option 5.
 
-**Q6. Who may see that a person is working, on what, and when?**
-Nobody → position 2. Their team → any position with scoping. Everyone → 3–5.
-*(scoping decision, independent of position)*
+**D6. What must survive the loss of a machine?**
+Published work → options 2–5. Work since the last save → options 3 and 5.
+Nothing beyond the working tree → option 1 also suffices.
 
-**Q7. What storage growth per developer per day is acceptable?**
-Storage proportional to publishing → positions 2 and 4. Proportional to typing
-→ positions 3 and 5. *(this is the cost question; it usually decides the
-argument)*
+**D7. Must local work continue while the server is unreachable?**
+Yes → options 1–4, with a local queue. Any option can queue locally, but only
+options 1–2 keep the server out of the local read path.
 
-**Q8. Must an identifier seen on one machine resolve on another?**
-For commits and bookmarks → position 2 onwards. For operation ids → position 5
-only. *(2+, 5)*
+**D8. What is the acceptable server storage growth per active workspace per
+day?**
+Growth proportional to publishing → options 2 and 4. Growth proportional to
+editing → options 3 and 5. This is the cost decision; the placeholder arithmetic
+in §4 is the input.
 
-**Q9. Is the operation log a user-facing and support-facing artifact, or purely
-internal machinery?**
-Internal → any position. Something support inspects after an incident → position
-4 at least, position 5 for the full picture. *(4, 5)*
+**D9. Which fields of the view are visible to other users?**
+Commits and refs only → options 1–2. Plus workspace identity and location →
+options 3–5. Plus every intermediate state → option 5. Scope (§4, modifiers)
+applies independently.
 
-**Q10. How long must shared history be retained, and who may delete it?**
-This does not choose a position, but it decides whether "the server has it"
-means "forever" or "for a while", and it must be answered alongside Q1–Q9.
-
----
-
-## 7. How answers combine
-
-There is no position that satisfies every "yes". The combinations that occur in
-practice:
-
-| If the answers are… | The position is |
-|---|---|
-| "Collaboration is publishing; work in progress is private." | 2 |
-| "We want to see what each other are doing, not read each other's drafts." | 3 |
-| "We need an auditable shared history of what was published and by whom." | 4 |
-| "We need a single complete history of everything, everywhere." | 5 |
-| Mixed answers | Usually 3 or 4, with retention and scoping doing the rest |
+**D10. What is the retention rule, and who may delete replicated history?**
+Independent of the option, and required before any option is implementable,
+because it determines whether a replicated record is a durable fact or a
+temporary one.
 
 ---
 
-## 8. What we are not asking
+## 7. What depends on these answers
 
-- **Not** asking to approve a design, a format, or a technology.
-- **Not** asking about user interface, commands or naming.
-- **Not** asking whether the system should exist. That is settled.
-- **Only** asking: which of the five positions is the product, and what are the
-  answers to Q1–Q10 that select it?
+The following cannot be specified without them, because each has a different
+shape per option:
 
-Until those are answered, any engineering choice on this subject is a guess, and
-guesses here are expensive to reverse: the position determines the server's data
-model, the client's protocol, the privacy story and the offline story, and none
-of those can be swapped later without a migration.
+- the server's data model and its conflict semantics (§5);
+- the wire format and its versioning;
+- the storage growth model and therefore capacity planning;
+- the recovery model after machine loss;
+- the privacy model, including whether workspace identity is user-visible;
+- the offline behaviour of the client;
+- the migration path if the answer changes later — options differ in the format
+  of the data at rest, not only in code.
 
 ---
 
-## Appendix — where the facts in this document come from
+## Appendix — sources
 
-- Operations and views are local state, not an exchange format:
-  `core/src/op_store.rs:282-286`.
-- A view is a complete snapshot, not a delta, and is stored as its own object
-  referenced by the operation: `core/src/op_store.rs:170-200`, `:294-320`.
-- The seven view fields, their types and meanings: `core/src/op_store.rs:172-194`.
-- A bookmark or tag target may be conflicted, and is represented as a merge of
-  candidate commits: `core/src/op_store.rs:63-64`.
-- Remote views are a remembered last-seen state, not an authority:
-  `docs/bookmarks.md:63-67`.
-- The operation log is the mechanism behind undo and recovery:
-  `docs/operation-log.md`.
+- Operations and views are local state: `core/src/op_store.rs:282-286`.
+- View fields and types: `core/src/op_store.rs:172-194`.
+- `RefTarget` definition: `core/src/op_store.rs:63-64`.
+- Operation structure: `core/src/op_store.rs:294-320`.
+- Working-copy pointer merge rule: `lib/src/repo.rs:1650-1677`,
+  `lib/src/op_heads_store.rs:154`.
+- Ref target merge: `core/src/refs.rs:95-118`.
+- Remote views are a remembered state: `docs/bookmarks.md:63-67`.
+- Operation log and undo: `docs/operation-log.md`.
+- Git ref-name mapping: `lib/src/git.rs:399-422`.
+- Built-in store registration: `cli/src/cli_util.rs:4129`.
