@@ -202,7 +202,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 30. Identity is delegated and propagated; replicas refuse unauthorized clients; per-user namespaces.
 31. Deliverable shape: one design document plus a deferred-decisions section, in `docs/design/`.
 32. Pins are subscription-stream based and order eviction only; GC ignores them.
-33. fsync: local durability plus a bounded push attempt, reporting the achieved level.
+33. fsync: satisfied by local durability at the node, not by the authority.
 34. Operation visibility: metadata immediately, blobs lazily, blocking read then retryable error.
 35. Offline authorization: undecided, four options documented with a recommendation.
 36. The document must be readable: plain-language preamble, diagrams for flows and edge cases, self-contained appendices.
