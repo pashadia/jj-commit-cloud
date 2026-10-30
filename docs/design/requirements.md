@@ -62,7 +62,7 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-29** The commit cloud must not debounce or delay acknowledgements. Bursts are accepted; coalescing may happen only after the acknowledgement.
 - **RQ-30** Immutability is enforced by the authority, inside the compare-and-swap that advances the heads. A replica never enforces it; a violation is parked, not applied.
 - **RQ-31** Bookmark divergence follows a per-bookmark policy: fast-forward-only (default, parking on conflict), authority-wins, or manual. Nothing is silently discarded.
-- **RQ-32** Operations rejected by policy are parked, surfaced and recoverable. Re-applying them produces new ids plus a durable old-to-new mapping, and a parked lineage keeps its descendants alive.
+- **RQ-32** An operation that a node will not apply, but must not lose, is **parked**: stored, surfaced to the user, and left unpublished until someone re-applies or discards it. Parking is the third outcome between applying and rejecting, and it exists because the decision is a human one — divergent bookmark moves under a fast-forward-only policy, an immutable bookmark, a `manual` policy, or a fence that moved while the writer was offline. It is never used for transient failures (missing blobs, a lost compare-and-swap, a collected base), which are rejected or retried instead. Re-applying a parked operation produces new ids plus a durable old-to-new mapping; the parked operations themselves are never edited, and a parked lineage keeps its descendants alive and out of garbage collection.
 
 ## 6. Offline work
 
