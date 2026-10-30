@@ -11,9 +11,14 @@ proposal for a specific implementation.
 
 ## 1. Scope
 
-The system under discussion puts a jj repository behind a shared server and
-connects several machines to it. One parameter is undecided: **which parts of
-each machine's repository state are replicated, and to whom.**
+The subject is a **commit cloud for jj repositories**: a shared service that
+stores jj repositories and serves them to several machines. Git is not part of
+that architecture. It appears below only where a field of jj's own data model
+refers to a Git repository, because those fields exist in every view whether or
+not the repository uses them.
+
+One parameter is undecided: **which parts of each machine's repository state are
+replicated, and to whom.**
 
 The parameter is not free. It determines the server's data model, the wire
 format, the storage growth rate, what `jj undo` can mean, whether local work
@@ -76,15 +81,19 @@ operation replicates all of its view.
 | 1 | `head_ids` | `HashSet<CommitId>` | All visible head commits; at least one. |
 | 2 | `local_bookmarks` | `BTreeMap<RefNameBuf, RefTarget>` | Local bookmark names and targets. Targets may be conflicted. |
 | 3 | `local_tags` | `BTreeMap<RefNameBuf, RefTarget>` | Local tags, same shape. |
-| 4 | `remote_views` | `BTreeMap<RemoteNameBuf, RemoteView>` | Last known position of each remote's bookmarks and tags, plus a tracked/untracked state per ref. A remembered state, not an authority (`docs/bookmarks.md:63-67`). |
-| 5 | `git_refs` | `BTreeMap<GitRefNameBuf, RefTarget>` | jj's remembered subset of Git refs, updated by import and export. Not a live mirror: some refs are excluded, e.g. `refs/notes/` (`lib/src/protos/simple_op_store.proto:105-106`). |
-| 6 | `git_heads` | `BTreeMap<WorkspaceNameBuf, RefTarget>` | The commit each workspace's Git `HEAD` points at. A ref target, so it may be conflicted or absent. |
+| 4 | `remote_views` | `BTreeMap<RemoteNameBuf, RemoteView>` | Remote-tracking state: the last known bookmark and tag position of each configured remote, plus a tracked/untracked flag per ref. A remembered state, not an authority (`docs/bookmarks.md:63-67`). |
+| 5 | `git_refs` | `BTreeMap<GitRefNameBuf, RefTarget>` | Interoperation cache: jj's remembered subset of the refs of an underlying Git repository, updated by import and export. Not a live mirror; some refs are excluded, e.g. `refs/notes/` (`lib/src/protos/simple_op_store.proto:105-106`). |
+| 6 | `git_heads` | `BTreeMap<WorkspaceNameBuf, RefTarget>` | Interoperation state: the commit each workspace's Git `HEAD` points at. A ref target, so it may be conflicted or absent. |
 | 7 | `wc_commit_ids` | `BTreeMap<WorkspaceNameBuf, CommitId>` | The commit each workspace should have checked out. The working-copy directory holds which commit is actually checked out. |
 
 `RefTarget` is `Merge<Option<CommitId>>` (`core/src/op_store.rs:63-64`), so a
 bookmark can hold several candidate commits instead of one. Types are those of
 `op_store::View`; the in-memory wrapper adds one non-persisted flag
 (`core/src/view.rs:44-49`).
+
+Fields 4–6 exist for interoperation with remotes and with Git repositories. A
+commit-cloud repository that never interoperates with Git leaves them empty, but
+they are part of every view and therefore part of anything replicated.
 
 ### 3.4 The fields fall into three categories
 
@@ -93,14 +102,15 @@ This grouping is analytic; it is not in the source.
 | Category | Fields | Property |
 |---|---|---|
 | Repository content pointers | 1–3 | Where history and named refs are. Meaningful to any machine that has the commits. `head_ids` is the visible-head set, not a named ref. |
-| Mirrors of another system | 4–6 | What a remote or a Git repository last reported. `git_heads` belongs here rather than with working state: in a colocated repository it usually names the parent of the checked-out commit, it merges as a ref target, and `jj undo` does not restore it. |
+| Interoperation state | 4–6 | What a remote or a Git repository last reported. `git_heads` belongs here rather than with working state: it merges as a ref target and `jj undo` does not restore it. Empty when no such interoperation is configured. |
 | Workspace checkout pointer | 7 | The commit a named workspace should have checked out. The working-copy directory holds which commit is actually checked out. |
 
 A snapshot transaction changes fields from more than one category: it writes a
 new working-copy commit and records it in `head_ids` and `wc_commit_ids` in the
-same transaction (`cli/src/cli_util.rs:2208-2243`); in a colocated repository the
-same transaction may also update `git_heads` and `git_refs`. Replication cannot
-be decided per category without splitting a single operation.
+same transaction (`cli/src/cli_util.rs:2208-2243`). Where Git interoperation is
+configured, the same transaction may also update the interoperation fields.
+Replication cannot be decided per category without splitting a single
+operation.
 
 ---
 
@@ -109,37 +119,36 @@ be decided per category without splitting a single operation.
 Five configurations, ordered by how much state is replicated. For each: what is
 replicated, what it makes possible, what it costs, and what it breaks.
 
-### Option 1 — Nothing replicated; collaboration via a Git remote
+### Option 1 — Nothing replicated
 
-Replicated: commits and refs, by explicit push, as with any Git remote. The
-operation log never leaves the machine.
+Replicated: nothing. Each machine holds a complete repository and its own
+operation log; nothing is exchanged automatically.
 
-- **Enables:** nothing beyond jj's current behaviour with a Git remote.
-- **Storage at the server:** proportional to pushed history only.
+- **Enables:** work on one machine.
+- **Storage at the server:** none; there is no server role.
 - **Breaks:** no visibility of unpublished work; no shared history of local
-  actions; no way to reconstruct what a lost machine was doing.
-- **Available today:** yes — this is jj with a Git backend.
+  actions; no way to reconstruct what a lost machine was doing; another
+  machine's commits and refs are unknown until copied by hand.
+- **Available today:** yes, as a baseline.
 
 ### Option 2 — Commits and refs replicated; operation logs local
 
-Replicated: commit objects, file blobs, and bookmark targets. Each machine keeps
-its own operation log, containing its own snapshots and pointer moves.
+Replicated: commit objects, file blobs, and bookmark and tag targets. Each
+machine keeps its own operation log, containing its own snapshots and pointer
+moves.
 
-- **Enables:** push and fetch without an intermediate Git repository; other
-  machines see published work with no extra step. `jj undo` continues to operate
-  on local history only.
+- **Enables:** publication with no separate synchronisation step; other machines
+  see published work immediately. `jj undo` continues to operate on local
+  history only.
 - **Storage at the server:** proportional to published commits, not to save
   frequency. A day of editing that produces one commit costs one commit.
 - **Bandwidth:** on publish, the blobs and trees not already present.
 - **Breaks:** unpublished work is invisible; loss of a machine loses everything
   not yet published; no cross-machine history; an operation id from another
-  machine cannot be resolved. A conflicted bookmark has no Git representation:
-  export skips it and leaves the previous ref in place
-  (`lib/src/git.rs:1672-1677`).
-- **Implementation status:** this is the shape jj already has, with a Git remote
-  replaced by the server. The ref export/import path exists
-  (`lib/src/git.rs:399-422` for the ref-name mapping); a native transport is new
-  but contains no new model.
+  machine cannot be resolved.
+- **Implementation status:** commits and refs already have a transport model in
+  jj; what changes is who the peer is. The work is a new transport, not a new
+  model.
 
 ### Option 3 — Option 2 plus a replicated working-copy pointer per workspace
 
@@ -196,7 +205,8 @@ every pointer move. One log, resolved identically everywhere.
     snapshots differ in `head_ids` and `wc_commit_ids`, so deduplication does
     not reduce the per-save cost.
   - Size: a view is dominated by ref names and targets. A scratch repository
-    with 50 bookmarks produced an 8.8 KB view including Git and remote refs;
+    with 50 bookmarks produced an 8.8 KB view counting every field, including the
+    interoperation ones;
     without those, expect a few KB. Order of magnitude 10^3–10^4 bytes per
     view, plus a few hundred bytes per operation record. Estimate from one
     measurement, not a benchmark.
@@ -244,8 +254,9 @@ by end time, after which the remaining heads are merged in order
 created and no user is asked. The winner is determined by operation end times,
 not by which machine is local.
 
-`git_heads` behaves differently: it is merged with `merge_ref_targets` and can
-remain conflicted (`lib/src/repo.rs:2072-2078`).
+`git_heads`, the other per-workspace field, merges as a ref target and can
+remain conflicted (`lib/src/repo.rs:2072-2078`), but it is populated only under
+Git interoperation.
 
 Consequence: any option that replicates `wc_commit_ids` replicates a value with
 a timing-based tie-break and no content merge.
@@ -335,9 +346,7 @@ shape per option:
 - Git-head merge rule (ref-target semantics): `lib/src/repo.rs:2072-2078`.
 - Snapshot transaction touching heads and pointer together:
   `cli/src/cli_util.rs:2208-2243`.
-- Conflicted bookmarks skipped on Git export: `lib/src/git.rs:1672-1677`.
 - Ref target merge: `core/src/refs.rs:95-118`.
 - Remote views are a remembered state: `docs/bookmarks.md:63-67`.
 - Operation log and undo: `docs/operation-log.md`.
-- Git ref-name mapping: `lib/src/git.rs:399-422`.
 - Built-in store registration: `cli/src/cli_util.rs:4129`.
