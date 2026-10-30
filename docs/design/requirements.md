@@ -105,28 +105,30 @@ Other people's work flows the other way: up to the authority, then back down to 
 
 ## 10. Protocol and transport
 
-- **RQ-57** gRPC only, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path, never loopback TCP.
-- **RQ-58** The protocol carries durability levels, pending counts, sync state, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
-- **RQ-59** Errors carry an explicit retryability and a retry hint. Clients distinguish "retry later" from "this will not work".
-- **RQ-60** Server-side reads are pure: no read RPC mutates authoritative state.
+- **RQ-57** Conflicts are **first-class data, not errors**. When an advance or a rebase cannot apply cleanly, the result is a commit whose tree carries the conflict, materialised in the mount as conflicted content that the user resolves by editing; the next snapshot records the resolution. Nothing is refused and nothing is lost. *(jj already represents conflicts inside the tree, so this needs no new mechanism; the mount must materialise conflicted content and treat an edit as its resolution.)*
+- **RQ-58** Advancing a mount's view is a **policy**, not an obligation: never, on request, or automatically when the mount is idle. An automatic advance must never run while there are unsnapshotted writes, and must be rate-limited so a busy upstream cannot churn the mount. *(An advance of a clean working copy is a checkout, not a rebase, and therefore cannot conflict. Only an advance that has to re-apply local edits can.)*
+- **RQ-59** gRPC only, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path, never loopback TCP.
+- **RQ-60** The protocol carries durability levels, pending counts, sync state, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
+- **RQ-61** Errors carry an explicit retryability and a retry hint. Clients distinguish "retry later" from "this will not work".
+- **RQ-62** Server-side reads are pure: no read RPC mutates authoritative state.
 
 ## 11. Platform and implementation
 
-- **RQ-61** Linux only for the MVP: one filesystem implementation, no portability layer.
-- **RQ-62** One implementation per seam. Seams may exist; shipping a second implementation is not part of this phase.
-- **RQ-63** The existing `daemon` crate is not to be reused.
-- **RQ-64** The CLI remains a first-class client of the same local node, and the VFS workspace is an ordinary jj workspace that the CLI can see.
+- **RQ-63** Linux only for the MVP: one filesystem implementation, no portability layer.
+- **RQ-64** One implementation per seam. Seams may exist; shipping a second implementation is not part of this phase.
+- **RQ-65** The existing `daemon` crate is not to be reused.
+- **RQ-66** The CLI remains a first-class client of the same local node, and the VFS workspace is an ordinary jj workspace that the CLI can see.
 
 ## 12. Verification
 
-- **RQ-65** Acceptance criteria must be executable or falsifiable, and one experiment must be able to falsify the design's load-bearing assumption.
-- **RQ-66** Tests must not be vacuous, must not depend on wall-clock ordering, must not accept "it didn't crash", and must not use the system under test as their own oracle.
-- **RQ-67** The metadata footprint must be measured before the replication plane is built. It is the assumption everything else rests on.
+- **RQ-67** Acceptance criteria must be executable or falsifiable, and one experiment must be able to falsify the design's load-bearing assumption.
+- **RQ-68** Tests must not be vacuous, must not depend on wall-clock ordering, must not accept "it didn't crash", and must not use the system under test as their own oracle.
+- **RQ-69** The metadata footprint must be measured before the replication plane is built. It is the assumption everything else rests on.
 
 ## 13. Documentation and working practice
 
-- **RQ-68** Design documents are bottom-line first, in plain language, with diagrams for flows and edge cases. No framework vocabulary unless it earns its place. Terms are defined before use, and the document includes a reading guide.
-- **RQ-69** Design phases do not write production code. Agent work happens in jj workspaces, never in the main checkout, and each deliverable is integrated by moving a bookmark rather than by copying files.
+- **RQ-70** Design documents are bottom-line first, in plain language, with diagrams for flows and edge cases. No framework vocabulary unless it earns its place. Terms are defined before use, and the document includes a reading guide.
+- **RQ-71** Design phases do not write production code. Agent work happens in jj workspaces, never in the main checkout, and each deliverable is integrated by moving a bookmark rather than by copying files.
 
 ---
 
