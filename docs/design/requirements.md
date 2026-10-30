@@ -44,14 +44,14 @@ Other people's work flows the other way: up to the authority, then back down to 
 
 ## 4. Reads
 
-- **RQ-14** A sequence of reads sees **one consistent state** of the repository. When a client starts reading — a directory listing, then the files in it — it names the operation it is reading from, and every call in that sequence is answered from that operation. The operation is **held** for the duration, so garbage collection cannot remove it underneath the reader while the sequence is running. *(A CLI command already does this implicitly: it reads one state from start to finish. The VFS has no command boundary, so it holds per open handle instead.)*
-- **RQ-15** If that state is too old to serve, the call fails with an explicit retryable "stale" error. It never silently mixes two states. *(The failure being ruled out: `stat` reports 100 bytes, `read` returns 90 with no error, because a commit landed between the two calls.)*
+- **RQ-14** The view a client reads is the client's **own commit**, and it moves only when the client moves it. Another client's work may advance the repository's heads and bookmarks, but it never moves this client's working-copy pointer or the tree its reads resolve to. Two clients editing the same commit therefore produce two commits with the same parent — a fork, which the operation model expects. A read sequence is pinned to the commit it began on, so a directory listing and the reads that follow it cannot tear.
+- **RQ-15** The only way a state a client is reading becomes unavailable is **collection**: its commit or its blobs are no longer retained. That fails with an explicit "collected" error and the client chooses a newer commit. Nothing ever half-applies, and no server-side event moves the view.
 - **RQ-16** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; the rest of these requirements assume it is shared.)*
 - **RQ-17** Blobs are fetched lazily. A read of a blob that is not local blocks up to a timeout and then returns a retryable error.
 - **RQ-18** `stat` never lies. Size, mode and mtime come from metadata, never from fetching content.
 - **RQ-19** Attributes are deterministic: given one operation, size, mtime, executable bit and directory ordering always have the same values. *(Agreed as stated. Deferred: which timestamp an mtime carries — content time, commit time or checkout time — is a policy choice, not part of this requirement.)*
 - **RQ-20** Prefetching is optional and deferred. If a node implements it, it may warm its cache with content it used before, but it must never fetch every blob of an operation on a large repository.
-- **RQ-21** A **cache hint** (also called a *pin*) keeps a blob from being evicted while a client is reading it. It is scoped per user and per client, expires on its own, and is **never** an input to garbage collection. It is unrelated to the hold in RQ-14, which protects an operation rather than a blob.
+- **RQ-21** A blob with an **open reader** is never evicted by the local node. This is a local rule, not a protocol concept: there are no pins, no pin TTLs and no pin stream. *(Evicting a blob from under an active read is not corrupting, but it forces a refetch and is impossible offline; keeping open blobs resident is simpler than a pin protocol, and it removes a whole class of expiry and cap rules.)*
 
 ## 5. Writes, acknowledgements and durability
 
@@ -81,14 +81,14 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-39** For v1 the storage unit is one file per object. Packing, segmentation and key-value storage are deferred, and the trade-offs must be written down rather than decided silently.
 - **RQ-40** Store (durable, authoritative) and Cache (evictable, rebuildable) are distinct. The trait boundaries stay in the design, but the MVP ships **one** implementation of each.
 - **RQ-41** jj's local index is not replicated. The authority may expose an optional opaque, version-tagged checkpoint; a replica may use it only if it validates, and must otherwise rebuild. The MVP rebuilds.
-- **RQ-42** Garbage collection runs only at the authority. Its input is reachability from heads, plus parked lineages, plus live snapshot holds, plus any custody the authority has already granted, plus a retention window. Client cache hints are never an input. *(The custody term is derived: an acknowledgement is a promise, and retention must last at least as long as the promise.)*
+- **RQ-42** Garbage collection runs only at the authority. Its input is reachability from heads, plus every working-copy commit a node reports as current, plus parked lineages, plus any custody the authority has already granted, plus a retention window. Nothing about a client's read position is an input, because a read is pinned to a commit that stay reachable until the client moves it. *(The custody term is derived: an acknowledgement is a promise, and retention must last at least as long as the promise.)*
 - **RQ-43** Eviction is least-recently-used by bytes, with dirty data never evicted. Retention must exceed the offline window or an offline replica will push onto a collected base.
 
 ## 8. Coherence and live updates
 
 - **RQ-44** Synchronization is server push over gRPC streaming, not polling: new operations, head changes, blobs becoming available, replica lag.
-- **RQ-45** A client sees operations from other clients on the same node **and** operations that arrive from upstream, without remounting.
-- **RQ-46** On a new head, clients refresh their metadata so that reads resolve to the new operation. Warming the cache ahead of a read is optional and deferred (RQ-20).
+- **RQ-45** A client sees work from other clients on the same node **and** work that arrives from upstream — commits, bookmarks, heads — without remounting. Seeing the repository advance is not the same as its own view moving: RQ-14 still holds, and `@` only moves when the client moves it.
+- **RQ-46** On a new head, a client may refresh what it knows about the repository — history, bookmarks, what is available — while its own reads continue at its commit. Warming the cache ahead of a read is optional and deferred (RQ-20).
 - **RQ-47** A bookmark advanced elsewhere propagates up to the authority and then down to every subscribed client.
 
 ## 9. The mount is a working copy
@@ -106,7 +106,7 @@ Other people's work flows the other way: up to the authority, then back down to 
 ## 10. Protocol and transport
 
 - **RQ-57** gRPC only, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path, never loopback TCP.
-- **RQ-58** The protocol carries durability levels, pending counts, sync state, snapshot holds, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
+- **RQ-58** The protocol carries durability levels, pending counts, sync state, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
 - **RQ-59** Errors carry an explicit retryability and a retry hint. Clients distinguish "retry later" from "this will not work".
 - **RQ-60** Server-side reads are pure: no read RPC mutates authoritative state.
 
@@ -150,7 +150,7 @@ Stated as out of scope now, without prejudice to later phases:
 |---|---|---|
 | OQ-1 | Custody acknowledgement: is `provisional` a flag on the three levels, or a fourth level? | Changes the wire shape; rejecting the idea means offline writes are refused |
 | OQ-2 | Offline authorization: which of the four options, and what is the maximum offline write window? | Sets the residual access of a revoked user, and how long a node may keep writing without contacting the authority |
-| OQ-3 | FUSE error for a stale snapshot: `ESTALE` or `EAGAIN`? | Determines whether a long-running tool survives a snapshot rollover |
+| OQ-3 | FUSE error for a state that has been collected: `ESTALE` or `EAGAIN`? | Determines how a long-running tool reacts when the commit it is reading is no longer retained |
 | OQ-4 | Announcement at a replica: "durable at the announcing node" (impossible for a replica) versus "locally fsynced or in authority custody" | Strict reading makes offline commits invisible to others until reconnect |
 | OQ-5 | Accept that authority disk loss without an upstream means repo loss, or bring backup into scope? | One sentence to accept, a subsystem to avoid |
 | OQ-6 | **Who constructs an operation:** the node, against its current head, or the client, against whatever base it last saw | Node-built keeps every hop's log linear and makes merges an offline edge case. Client-built makes a fork at the node for every stale base, so merge-and-park becomes steady state and the loser rewrites an id |
@@ -174,7 +174,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 6. Hashing is content-based, SHA-256 by operator instruction, with the id-width cost acknowledged.
 7. One file per object in v1; packing is deferred with its trade-offs written down.
 8. Snapshots are immutable; revisions evolve; bookmarks can be immutable; the authority enforces it.
-9. Staleness: metadata always local, blobs best effort, a held operation per read sequence, no tearing, explicit retryable stale error.
+9. Staleness: metadata always local, blobs best effort. A client's view is its own commit and never moves underneath it; only collection can end it, and that is an explicit error.
 10. Clients learn of new operations by server push.
 11. Offline: accept writes and reconcile later, after being shown the drawbacks.
 12. Read-write, not read-only. The debounce sits on the snapshot path, never on the acknowledgement path.
@@ -186,7 +186,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 18. Multiple upstreams are conceptually allowed and deferred in detail.
 19. A node serves many repositories and many mounts, multi-user.
 20. Concurrent writers on one workspace: impossible by construction, because a workspace belongs to one node and that node admits one writer at a time.
-21. Reads are held to one operation, and a stale hold may error rather than tear.
+21. A client reads its own commit, pinned for the sequence; the pointer moves only when the client moves it.
 22. Partitioned writes are accepted and reconciled; the drawbacks were explained and accepted.
 23. "In sync" means divergent trees eventually replicate; the VFS is notified by push.
 24. Metadata is durable with explicit acknowledgements; blobs are eventually consistent.
