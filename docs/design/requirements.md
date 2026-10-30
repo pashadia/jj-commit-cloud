@@ -83,9 +83,10 @@ Other people's work flows the other way: up to the authority, then back down to 
 
 ## 8. Coherence and live updates
 
-- **RQ-8-1** A client is **entitled to learn of observable change** — commits and heads advancing, bookmarks moving or becoming conflicted, work arriving from other clients on the same node or from upstream, and removals announced by the authority (RQ-7-4) — and never has to remount to see it. The channel carries **change**, never object availability. Content the node does not hold is obtained by the read that needs it (RQ-4-4); warming a cache is invisible to every client, including the one that caused it. Seeing the repository advance is not the same as its own view moving — RQ-4-1 still holds, and `@` moves only when the client moves it. How the client learns is the design's choice, and polling is allowed. *(**Open (OQ-15):** automatic notification, or a command the client runs.)*
-- **RQ-8-2** On a new head, a client may refresh what it knows about the repository — history, bookmarks, what is available — while its own reads continue at its commit. Warming the cache ahead of a read is optional and deferred (RQ-4-7).
-- **RQ-8-3** A bookmark advanced elsewhere propagates up to the authority and then down to every subscribed client.
+- **RQ-8-1** A client is **entitled to learn of observable change** — commits and heads advancing, bookmarks moving or becoming conflicted, work arriving from other clients on the same node or from upstream, and removals announced by the authority (RQ-7-4) — and never has to remount to see it. The channel carries **change**, never object availability: content the node does not hold is obtained by the read that needs it (RQ-4-4), and warming a cache is invisible to every client, including the one that caused it.
+- **RQ-8-2** Learning of change does not move the client's view. Seeing the repository advance is not the same as `@` moving: RQ-4-1 still holds, and `@` moves only when the client moves it (RQ-10-2). What a client may do on learning of a new head is refresh what it knows — history, bookmarks, what is available — while its own reads continue at its commit. Warming ahead of a read is optional and deferred (RQ-4-7).
+- **RQ-8-3** Anything the authority decides travels **up before it travels down**. A bookmark advanced at a node reaches the authority, is resolved there (RQ-3-3), and only then reaches every client of the repository; when two moves diverge, what arrives may be a conflict rather than a winner (RQ-5-9).
+- **RQ-8-4** How a client learns is the design's choice: notification, polling, a command, or a combination. *(**Open (OQ-15):** automatic notification, or a command the client runs.)*
 
 ## 9. The mount is a working copy
 
