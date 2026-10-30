@@ -22,114 +22,114 @@ Other people's work flows the other way: up to the authority, then back down to 
 
 ## 2. Goals
 
-- **RQ-1** The system is a commit cloud for jj repositories: it stores history metadata and file contents, and serves them to a CLI and to one or more FUSE mounts.
-- **RQ-2** Metadata reads are served from the local node and are near-instant. A `stat`, a directory listing or a history view must not depend on a network round trip.
-- **RQ-3** File contents are served locally when the node has them. When it does not, the read blocks for a bounded time and then returns a retryable error; it never returns a partial or torn file.
-- **RQ-4** Work continues while disconnected, **including writes**. Offline work is reconciled later without loss and without silent rewriting.
-- **RQ-5** The same design works at any depth, with the same binary. Depth is a property of who points at whom, not a separate architecture: a node's tier is derived, being 0 for the authority and one more than its upstream otherwise.
+- **RQ-2-1** The system is a commit cloud for jj repositories: it stores history metadata and file contents, and serves them to a CLI and to one or more FUSE mounts.
+- **RQ-2-2** Metadata reads are served from the local node and are near-instant. A `stat`, a directory listing or a history view must not depend on a network round trip.
+- **RQ-2-3** File contents are served locally when the node has them. When it does not, the read blocks for a bounded time and then returns a retryable error; it never returns a partial or torn file.
+- **RQ-2-4** Work continues while disconnected, **including writes**. Offline work is reconciled later without loss and without silent rewriting.
+- **RQ-2-5** The same design works at any depth, with the same binary. Depth is a property of who points at whom, not a separate architecture: a node's tier is derived, being 0 for the authority and one more than its upstream otherwise.
 
 ## 3. Roles and topology
 
-- **RQ-6** Exactly two roles: **authority** and **replica**. No third role, no "edge" role.
-- **RQ-7** Roles are bound per (node, repository), not per node. One node may be authority for repo A and replica for repo B.
-- **RQ-8** The authority is the repo's durable owner and the only place truth is decided: immutability, bookmark policy, op-head compare-and-swap, merge, repo identity, garbage collection. It **may have no upstream at all**; that is a first-class, fully supported configuration (local-first development with no cloud).
-- **RQ-9** A replica has exactly one upstream for that repo, is **not durable**, may be emptied wholesale at any time, and is never a backup.
-- **RQ-10** Topology for v1 is a tree: one upstream per (node, repo). Multi-upstream and fan-in are deferred, but must not be structurally foreclosed.
-- **RQ-11** One node serves N repositories and M mounts. Multi-user machines are supported with per-user isolation.
-- **RQ-12** Workspaces are **unique by construction**, and a workspace is a pointer in the view, not a lock.
+- **RQ-3-1** Exactly two roles: **authority** and **replica**. No third role, no "edge" role.
+- **RQ-3-2** Roles are bound per (node, repository), not per node. One node may be authority for repo A and replica for repo B.
+- **RQ-3-3** The authority is the repo's durable owner and the only place truth is decided: immutability, bookmark policy, op-head compare-and-swap, merge, repo identity, garbage collection. It **may have no upstream at all**; that is a first-class, fully supported configuration (local-first development with no cloud).
+- **RQ-3-4** A replica has exactly one upstream for that repo, is **not durable**, may be emptied wholesale at any time, and is never a backup.
+- **RQ-3-5** Topology for v1 is a tree: one upstream per (node, repo). Multi-upstream and fan-in are deferred, but must not be structurally foreclosed.
+- **RQ-3-6** One node serves N repositories and M mounts. Multi-user machines are supported with per-user isolation.
+- **RQ-3-7** Workspaces are **unique by construction**, and a workspace is a pointer in the view, not a lock.
   - *Unique.* A workspace is named for the node that owns it, so two nodes cannot name the same workspace. Copying a workspace to another node creates a **new** workspace at a commit, not a second writer of the same one. A node's identity is generated once, is stable across restarts, and must not be copied with its data; a duplicate identity is a configuration error that the node should refuse rather than half-support.
   - *Pointer.* The view maps a workspace name to a working-copy commit. There is no lease, fence or ownership anywhere in the repository, and none is added. A node admits one writer per workspace at a time; that admission is in-process and is the only lock in the system.
   - *Why the rule exists.* If two nodes did share a name, `merge_wc_commit` would keep one side silently — the operation that finished first — and the other client's working copy would be reported stale. Nothing would be lost: the losing commit stays in the graph. The failure is merely confusing, so it is designed out rather than handled.
-- **RQ-13** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(This replaces the opaque, server-assigned id: today the client may pass `repo_id` and the server otherwise assigns one, `lib/src/cc_backend.rs:55-64`.)*
+- **RQ-3-8** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(This replaces the opaque, server-assigned id: today the client may pass `repo_id` and the server otherwise assigns one, `lib/src/cc_backend.rs:55-64`.)*
 
 ## 4. Reads
 
-- **RQ-14** The view a client reads is the client's **own commit**, and it moves only when the client moves it. Another client's work may advance the repository's heads and bookmarks, but it never moves this client's working-copy pointer or the tree its reads resolve to. Two clients editing the same commit therefore produce two commits with the same parent — a fork, which the operation model expects. A read sequence is pinned to the commit it began on, so a directory listing and the reads that follow it cannot tear. Advancing is therefore a decision, not a background event: when the client does advance, the switch is atomic, handles already open keep the commit they opened, and only the operation that asked to advance waits.
-- **RQ-15** The only way a state a client is reading becomes unavailable is **collection**: its commit or its blobs are no longer retained. That fails with an explicit "collected" error and the client chooses a newer commit. Nothing ever half-applies, and no server-side event moves the view.
-- **RQ-16** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; the rest of these requirements assume it is shared.)*
-- **RQ-17** Blobs are fetched lazily. A read of a blob that is not local blocks up to a timeout and then returns a retryable error.
-- **RQ-18** `stat` never lies. Size, mode and mtime come from metadata, never from fetching content.
-- **RQ-19** Attributes are deterministic: given one operation, size, mtime, executable bit and directory ordering always have the same values. *(Agreed as stated. Deferred: which timestamp an mtime carries — content time, commit time or checkout time — is a policy choice, not part of this requirement.)*
-- **RQ-20** Prefetching is optional and deferred. If a node implements it, it may warm its cache with content it used before, but it must never fetch every blob of an operation on a large repository.
-- **RQ-21** A blob with an **open reader** is never evicted by the local node. This is a local rule, not a protocol concept: there are no pins, no pin TTLs and no pin stream. *(Evicting a blob from under an active read is not corrupting, but it forces a refetch and is impossible offline; keeping open blobs resident is simpler than a pin protocol, and it removes a whole class of expiry and cap rules.)*
+- **RQ-4-1** The view a client reads is the client's **own commit**, and it moves only when the client moves it. Another client's work may advance the repository's heads and bookmarks, but it never moves this client's working-copy pointer or the tree its reads resolve to. Two clients editing the same commit therefore produce two commits with the same parent — a fork, which the operation model expects. A read sequence is pinned to the commit it began on, so a directory listing and the reads that follow it cannot tear. Advancing is therefore a decision, not a background event: when the client does advance, the switch is atomic, handles already open keep the commit they opened, and only the operation that asked to advance waits.
+- **RQ-4-2** The only way a state a client is reading becomes unavailable is **collection**: its commit or its blobs are no longer retained. That fails with an explicit "collected" error and the client chooses a newer commit. Nothing ever half-applies, and no server-side event moves the view.
+- **RQ-4-3** Metadata is served by the local node from what it holds: the operation log, the heads, commit headers, tree manifests and the attributes the VFS needs. A metadata read never depends on a network round trip. *(**Open (OQ-10):** whether the operation log belongs in the commit cloud at all. With a git backend it never leaves the machine; the rest of these requirements assume it is shared.)*
+- **RQ-4-4** Blobs are fetched lazily. A read of a blob that is not local blocks up to a timeout and then returns a retryable error.
+- **RQ-4-5** `stat` never lies. Size, mode and mtime come from metadata, never from fetching content.
+- **RQ-4-6** Attributes are deterministic: given one operation, size, mtime, executable bit and directory ordering always have the same values. *(Agreed as stated. Deferred: which timestamp an mtime carries — content time, commit time or checkout time — is a policy choice, not part of this requirement.)*
+- **RQ-4-7** Prefetching is optional and deferred. If a node implements it, it may warm its cache with content it used before, but it must never fetch every blob of an operation on a large repository.
+- **RQ-4-8** A blob with an **open reader** is never evicted by the local node. This is a local rule, not a protocol concept: there are no pins, no pin TTLs and no pin stream. *(Evicting a blob from under an active read is not corrupting, but it forces a refetch and is impossible offline; keeping open blobs resident is simpler than a pin protocol, and it removes a whole class of expiry and cap rules.)*
 
 ## 5. Writes, acknowledgements and durability
 
-- **RQ-22** A node serializes operation creation per repository: at most one local client is creating and appending an operation at a time. Two clients on the same node must never race to append, because the loser has to rebuild its operation against a new parent and therefore produces a new operation id.
-- **RQ-23** Every hop's log is append-only: once a node has accepted an operation it is never rewritten, re-identified or reordered. Divergence is resolved by appending a merge operation or by parking — never by editing history.
-- **RQ-24** **Every snapshot reaches the authority; the node chooses when, never which.** Local history is the window between a snapshot and its publication — durable on the node, not yet replicated. The window is bounded (placeholder: five minutes) and the bound applies only while the node can reach its upstream; an explicit publish request shortens it, and going offline suspends it while the queue keeps its order. Publishing may put many operations into one transport message, but each operation is still applied and acknowledged individually and the published prefix preserves their order. Nothing in the window may be dropped, coalesced away or superseded: an intermediate snapshot is not a draft to be improved on. *(This is what makes a snapshot a promise of delivery rather than a best effort. The cost is that the shared log grows at the aggregate snapshot rate. **Preservation is never assumed:** publishing makes a snapshot visible, not permanent, and the cloud is deliberately not a per-save archive.)*
-- **RQ-25** **Pruning is the authority's decision and it is announced.** No client prunes shared history. When the authority prunes operations, every connected node learns of it and drops them from its own log, and that node's clients see the same; a node that was offline learns of it on reconnect, so pruning is a fact a node may discover late rather than an event it must witness. How the authority chooses what to prune, and how long it keeps anything, is outside this design. *(What the design fixes is only the direction of authority and the direction of the announcement. Because preservation is not promised, a client may never treat a published operation, or the snapshots it names, as permanent.)*
-- **RQ-26** The operation model is multi-writer and content-addressed: simultaneous lineages converge by DAG merge, never by last-write-wins. Forks are expected to be rare because exactly one workspace has a writer.
-- **RQ-27** An operation is never announced before every blob it references is retrievable at the announcing node. No dangling references, at any tier.
-- **RQ-28** Every write acknowledgement reports the durability level actually achieved and the work still pending. The levels are `local`, `upstream` and `authority`; `upstream` is only meaningful at tier 1, and an acknowledgement that has not reached the authority is marked **provisional**.
-- **RQ-29** `fsync` returns once the data is locally durable at the node plus a bounded push attempt. It does not wait for the authority.
-- **RQ-30** The commit cloud must not debounce or delay acknowledgements. Bursts are accepted; coalescing may happen only after the acknowledgement.
-- **RQ-31** Immutability is enforced by the authority, inside the compare-and-swap that advances the heads. A replica never enforces it; a violation is parked, not applied.
-- **RQ-32** Bookmark divergence follows a per-bookmark policy: fast-forward-only (default, parking on conflict), authority-wins, or manual. Nothing is silently discarded.
-- **RQ-33** An operation that a node will not apply, but must not lose, is **parked**: stored, surfaced to the user, and left unpublished until someone re-applies or discards it. Parking is the third outcome between applying and rejecting, and it exists because the decision is a human one — divergent bookmark moves under a fast-forward-only policy, an immutable bookmark, or a `manual` policy. A workspace pointer that moved is **not** a parking case: nothing is lost, and the losing client reconciles its working copy instead. It is never used for transient failures (missing blobs, a lost compare-and-swap, a collected base), which are rejected or retried instead. Re-applying a parked operation produces new ids plus a durable old-to-new mapping; the parked operations themselves are never edited, and a parked lineage keeps its descendants alive and out of garbage collection.
+- **RQ-5-1** A node serializes operation creation per repository: at most one local client is creating and appending an operation at a time. Two clients on the same node must never race to append, because the loser has to rebuild its operation against a new parent and therefore produces a new operation id.
+- **RQ-5-2** Every hop's log is append-only: once a node has accepted an operation it is never rewritten, re-identified or reordered. Divergence is resolved by appending a merge operation or by parking — never by editing history.
+- **RQ-5-3** **Every snapshot reaches the authority; the node chooses when, never which.** Local history is the window between a snapshot and its publication — durable on the node, not yet replicated. The window is bounded (placeholder: five minutes) and the bound applies only while the node can reach its upstream; an explicit publish request shortens it, and going offline suspends it while the queue keeps its order. Publishing may put many operations into one transport message, but each operation is still applied and acknowledged individually and the published prefix preserves their order. Nothing in the window may be dropped, coalesced away or superseded: an intermediate snapshot is not a draft to be improved on. *(This is what makes a snapshot a promise of delivery rather than a best effort. The cost is that the shared log grows at the aggregate snapshot rate. **Preservation is never assumed:** publishing makes a snapshot visible, not permanent, and the cloud is deliberately not a per-save archive.)*
+- **RQ-5-4** **Pruning is the authority's decision and it is announced.** No client prunes shared history. When the authority prunes operations, every connected node learns of it and drops them from its own log, and that node's clients see the same; a node that was offline learns of it on reconnect, so pruning is a fact a node may discover late rather than an event it must witness. How the authority chooses what to prune, and how long it keeps anything, is outside this design. *(What the design fixes is only the direction of authority and the direction of the announcement. Because preservation is not promised, a client may never treat a published operation, or the snapshots it names, as permanent.)*
+- **RQ-5-5** The operation model is multi-writer and content-addressed: simultaneous lineages converge by DAG merge, never by last-write-wins. Forks are expected to be rare because exactly one workspace has a writer.
+- **RQ-5-6** An operation is never announced before every blob it references is retrievable at the announcing node. No dangling references, at any tier.
+- **RQ-5-7** Every write acknowledgement reports the durability level actually achieved and the work still pending. The levels are `local`, `upstream` and `authority`; `upstream` is only meaningful at tier 1, and an acknowledgement that has not reached the authority is marked **provisional**.
+- **RQ-5-8** `fsync` returns once the data is locally durable at the node plus a bounded push attempt. It does not wait for the authority.
+- **RQ-5-9** The commit cloud must not debounce or delay acknowledgements. Bursts are accepted; coalescing may happen only after the acknowledgement.
+- **RQ-5-10** Immutability is enforced by the authority, inside the compare-and-swap that advances the heads. A replica never enforces it; a violation is parked, not applied.
+- **RQ-5-11** Bookmark divergence follows a per-bookmark policy: fast-forward-only (default, parking on conflict), authority-wins, or manual. Nothing is silently discarded.
+- **RQ-5-12** An operation that a node will not apply, but must not lose, is **parked**: stored, surfaced to the user, and left unpublished until someone re-applies or discards it. Parking is the third outcome between applying and rejecting, and it exists because the decision is a human one — divergent bookmark moves under a fast-forward-only policy, an immutable bookmark, or a `manual` policy. A workspace pointer that moved is **not** a parking case: nothing is lost, and the losing client reconciles its working copy instead. It is never used for transient failures (missing blobs, a lost compare-and-swap, a collected base), which are rejected or retried instead. Re-applying a parked operation produces new ids plus a durable old-to-new mapping; the parked operations themselves are never edited, and a parked lineage keeps its descendants alive and out of garbage collection.
 
 ## 6. Offline work
 
-- **RQ-34** A replica accepts writes while disconnected and reconciles later. Anything not yet in authority custody is dirty and immune to eviction.
-- **RQ-35** A node holding dirty state may neither be emptied wholesale nor be re-bound to a different repository identity until that state is drained or explicitly abandoned. Abandonment returns an inventory and is recorded. *(There is no "origin switch" any more: identity includes the authority, so a different authority is a different repository.)*
-- **RQ-36** Sync state is a first-class, user-visible concept: pending counts, pending bytes, age, parked operations and their reasons.
-- **RQ-37** Reconciliation has exactly three outcomes per operation — applied, parked, or rejected with a reason (missing blobs, a collected base, authorization, protocol version) — and only "applied" clears dirty.
-- **RQ-38** Offline authorization is **undecided**. Four options are on the table (strict deny, bounded read-only grace, a signed repo-and-user-scoped TTL grant, a local trust boundary); writes while offline always require valid, unexpired authorization.
+- **RQ-6-1** A replica accepts writes while disconnected and reconciles later. Anything not yet in authority custody is dirty and immune to eviction.
+- **RQ-6-2** A node holding dirty state may neither be emptied wholesale nor be re-bound to a different repository identity until that state is drained or explicitly abandoned. Abandonment returns an inventory and is recorded. *(There is no "origin switch" any more: identity includes the authority, so a different authority is a different repository.)*
+- **RQ-6-3** Sync state is a first-class, user-visible concept: pending counts, pending bytes, age, parked operations and their reasons.
+- **RQ-6-4** Reconciliation has exactly three outcomes per operation — applied, parked, or rejected with a reason (missing blobs, a collected base, authorization, protocol version) — and only "applied" clears dirty.
+- **RQ-6-5** Offline authorization is **undecided**. Four options are on the table (strict deny, bounded read-only grace, a signed repo-and-user-scoped TTL grant, a local trust boundary); writes while offline always require valid, unexpired authorization.
 
 ## 7. Storage, keys and reclamation
 
-- **RQ-39** Objects are keyed by content hash; the operator specified SHA-256. This has a known cost: jj's ids are 16 and 20 bytes today, so a mapping layer is required.
-- **RQ-40** For v1 the storage unit is one file per object. Packing, segmentation and key-value storage are deferred, and the trade-offs must be written down rather than decided silently.
-- **RQ-41** Store (durable, authoritative) and Cache (evictable, rebuildable) are distinct. The trait boundaries stay in the design, but the MVP ships **one** implementation of each.
-- **RQ-42** jj's local index is not replicated. The authority may expose an optional opaque, version-tagged checkpoint; a replica may use it only if it validates, and must otherwise rebuild. The MVP rebuilds.
-- **RQ-43** Garbage collection runs only at the authority. Its input is reachability from heads, plus every working-copy commit a node reports as current, plus parked lineages, plus any custody the authority has already granted, plus a retention window. Nothing about a client's read position is an input, because a read is pinned to a commit that stay reachable until the client moves it. *(The custody term is derived: an acknowledgement is a promise, and retention must last at least as long as the promise.)*
-- **RQ-44** Eviction is least-recently-used by bytes, with dirty data never evicted. Retention must exceed the offline window or an offline replica will push onto a collected base.
+- **RQ-7-1** Objects are keyed by content hash; the operator specified SHA-256. This has a known cost: jj's ids are 16 and 20 bytes today, so a mapping layer is required.
+- **RQ-7-2** For v1 the storage unit is one file per object. Packing, segmentation and key-value storage are deferred, and the trade-offs must be written down rather than decided silently.
+- **RQ-7-3** Store (durable, authoritative) and Cache (evictable, rebuildable) are distinct. The trait boundaries stay in the design, but the MVP ships **one** implementation of each.
+- **RQ-7-4** jj's local index is not replicated. The authority may expose an optional opaque, version-tagged checkpoint; a replica may use it only if it validates, and must otherwise rebuild. The MVP rebuilds.
+- **RQ-7-5** Garbage collection runs only at the authority. Its input is reachability from heads, plus every working-copy commit a node reports as current, plus parked lineages, plus any custody the authority has already granted, plus a retention window. Nothing about a client's read position is an input, because a read is pinned to a commit that stay reachable until the client moves it. *(The custody term is derived: an acknowledgement is a promise, and retention must last at least as long as the promise.)*
+- **RQ-7-6** Eviction is least-recently-used by bytes, with dirty data never evicted. Retention must exceed the offline window or an offline replica will push onto a collected base.
 
 ## 8. Coherence and live updates
 
-- **RQ-45** Clients learn about new work — operations, head changes, blobs becoming available, replica lag, pruning — promptly enough that they do not have to poll, and without remounting. *(The channel itself is undecided; see OQ-12.)*
-- **RQ-46** A client sees work from other clients on the same node **and** work that arrives from upstream — commits, bookmarks, heads — without remounting. Seeing the repository advance is not the same as its own view moving: RQ-14 still holds, and `@` only moves when the client moves it.
-- **RQ-47** On a new head, a client may refresh what it knows about the repository — history, bookmarks, what is available — while its own reads continue at its commit. Warming the cache ahead of a read is optional and deferred (RQ-20).
-- **RQ-48** A bookmark advanced elsewhere propagates up to the authority and then down to every subscribed client.
+- **RQ-8-1** Clients learn about new work — operations, head changes, blobs becoming available, replica lag, pruning — promptly enough that they do not have to poll, and without remounting. *(The channel itself is undecided; see OQ-12.)*
+- **RQ-8-2** A client sees work from other clients on the same node **and** work that arrives from upstream — commits, bookmarks, heads — without remounting. Seeing the repository advance is not the same as its own view moving: RQ-4-1 still holds, and `@` only moves when the client moves it.
+- **RQ-8-3** On a new head, a client may refresh what it knows about the repository — history, bookmarks, what is available — while its own reads continue at its commit. Warming the cache ahead of a read is optional and deferred (RQ-4-7).
+- **RQ-8-4** A bookmark advanced elsewhere propagates up to the authority and then down to every subscribed client.
 
 ## 9. The mount is a working copy
 
-- **RQ-49** The mount presents at least one working copy that is read-write and usable as a version-control working copy. **Unsettled:** whether the mount root *is* that working copy, or whether working copies live in subdirectories beneath it (OQ-8).
-- **RQ-50** The VFS keeps **no persistent state**: no blob cache, no metadata cache, nothing restored after a crash. Transient buffers are permitted and are simply lost.
-- **RQ-51** Writes stream to the local node per call; the VFS does not accumulate file content on the node's behalf.
-- **RQ-52** The node acknowledges a write once the bytes are durably staged at the node, before any snapshot exists.
-- **RQ-53** A snapshot is taken on a trailing debounce of 0.5–1 s, at a 30 s maximum age, and immediately on `fsync` or `close`. Intervals are runtime-configurable.
-- **RQ-54** Propagation runs on a separate clock: on idle, on `fsync`, or every 5–30 s. Runtime-configurable. Reaching the authority is eventual and is not the VFS's concern.
-- **RQ-55** Uncommitted bytes live at the node in a mutable staging area; they become content-addressed blobs at snapshot time.
-- **RQ-56** `fsync` on the mount is satisfied by local durability at the node.
-- **RQ-57** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks.
+- **RQ-9-1** The mount presents at least one working copy that is read-write and usable as a version-control working copy. **Unsettled:** whether the mount root *is* that working copy, or whether working copies live in subdirectories beneath it (OQ-8).
+- **RQ-9-2** The VFS keeps **no persistent state**: no blob cache, no metadata cache, nothing restored after a crash. Transient buffers are permitted and are simply lost.
+- **RQ-9-3** Writes stream to the local node per call; the VFS does not accumulate file content on the node's behalf.
+- **RQ-9-4** The node acknowledges a write once the bytes are durably staged at the node, before any snapshot exists.
+- **RQ-9-5** A snapshot is taken on a trailing debounce of 0.5–1 s, at a 30 s maximum age, and immediately on `fsync` or `close`. Intervals are runtime-configurable.
+- **RQ-9-6** Propagation runs on a separate clock: on idle, on `fsync`, or every 5–30 s. Runtime-configurable. Reaching the authority is eventual and is not the VFS's concern.
+- **RQ-9-7** Uncommitted bytes live at the node in a mutable staging area; they become content-addressed blobs at snapshot time.
+- **RQ-9-8** `fsync` on the mount is satisfied by local durability at the node.
+- **RQ-9-9** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks.
 
 ## 10. Protocol and transport
 
-- **RQ-58** Conflicts are **first-class data, not errors**. When an advance or a rebase cannot apply cleanly, the result is a commit whose tree carries the conflict, materialised in the mount as conflicted content that the user resolves by editing; the next snapshot records the resolution. Nothing is refused and nothing is lost. *(jj already represents conflicts inside the tree, so this needs no new mechanism; the mount must materialise conflicted content and treat an edit as its resolution.)*
-- **RQ-59** Advancing a mount's view is a **policy**, not an obligation: never, on request, or automatically when the mount is idle. An automatic advance must never run while there are unsnapshotted writes, and must be rate-limited so a busy upstream cannot churn the mount. *(An advance of a clean working copy is a checkout, not a rebase, and therefore cannot conflict. Only an advance that has to re-apply local edits can.)*
-- **RQ-60** gRPC only, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path, never loopback TCP.
-- **RQ-61** The protocol carries durability levels, pending counts, sync state, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
-- **RQ-62** Errors carry an explicit retryability and a retry hint. Clients distinguish "retry later" from "this will not work".
-- **RQ-63** Server-side reads are pure: no read RPC mutates authoritative state.
+- **RQ-10-1** Conflicts are **first-class data, not errors**. When an advance or a rebase cannot apply cleanly, the result is a commit whose tree carries the conflict, materialised in the mount as conflicted content that the user resolves by editing; the next snapshot records the resolution. Nothing is refused and nothing is lost. *(jj already represents conflicts inside the tree, so this needs no new mechanism; the mount must materialise conflicted content and treat an edit as its resolution.)*
+- **RQ-10-2** Advancing a mount's view is a **policy**, not an obligation: never, on request, or automatically when the mount is idle. An automatic advance must never run while there are unsnapshotted writes, and must be rate-limited so a busy upstream cannot churn the mount. *(An advance of a clean working copy is a checkout, not a rebase, and therefore cannot conflict. Only an advance that has to re-apply local edits can.)*
+- **RQ-10-3** gRPC only, over HTTP/2 or a Unix domain socket. The local VFS-to-node path uses a unique socket path, never loopback TCP.
+- **RQ-10-4** The protocol carries durability levels, pending counts, sync state, custody acknowledgements and a subscription stream. Local-first capabilities are named RPCs, not inferred.
+- **RQ-10-5** Errors carry an explicit retryability and a retry hint. Clients distinguish "retry later" from "this will not work".
+- **RQ-10-6** Server-side reads are pure: no read RPC mutates authoritative state.
 
 ## 11. Platform and implementation
 
-- **RQ-64** Linux only for the MVP: one filesystem implementation, no portability layer.
-- **RQ-65** One implementation per seam. Seams may exist; shipping a second implementation is not part of this phase.
-- **RQ-66** The existing `daemon` crate is not to be reused.
-- **RQ-67** The CLI remains a first-class client of the same local node, and the VFS workspace is an ordinary jj workspace that the CLI can see.
+- **RQ-11-1** Linux only for the MVP: one filesystem implementation, no portability layer.
+- **RQ-11-2** One implementation per seam. Seams may exist; shipping a second implementation is not part of this phase.
+- **RQ-11-3** The existing `daemon` crate is not to be reused.
+- **RQ-11-4** The CLI remains a first-class client of the same local node, and the VFS workspace is an ordinary jj workspace that the CLI can see.
 
 ## 12. Verification
 
-- **RQ-68** Acceptance criteria must be executable or falsifiable, and one experiment must be able to falsify the design's load-bearing assumption.
-- **RQ-69** Tests must not be vacuous, must not depend on wall-clock ordering, must not accept "it didn't crash", and must not use the system under test as their own oracle.
-- **RQ-70** The metadata footprint must be measured before the replication plane is built. It is the assumption everything else rests on.
+- **RQ-12-1** Acceptance criteria must be executable or falsifiable, and one experiment must be able to falsify the design's load-bearing assumption.
+- **RQ-12-2** Tests must not be vacuous, must not depend on wall-clock ordering, must not accept "it didn't crash", and must not use the system under test as their own oracle.
+- **RQ-12-3** The metadata footprint must be measured before the replication plane is built. It is the assumption everything else rests on.
 
 ## 13. Documentation and working practice
 
-- **RQ-71** Design documents are bottom-line first, in plain language, with diagrams for flows and edge cases. No framework vocabulary unless it earns its place. Terms are defined before use, and the document includes a reading guide.
-- **RQ-72** Design phases do not write production code. Agent work happens in jj workspaces, never in the main checkout, and each deliverable is integrated by moving a bookmark rather than by copying files.
+- **RQ-13-1** Design documents are bottom-line first, in plain language, with diagrams for flows and edge cases. No framework vocabulary unless it earns its place. Terms are defined before use, and the document includes a reading guide.
+- **RQ-13-2** Design phases do not write production code. Agent work happens in jj workspaces, never in the main checkout, and each deliverable is integrated by moving a bookmark rather than by copying files.
 
 ---
 
@@ -162,7 +162,7 @@ Stated as out of scope now, without prejudice to later phases:
 | OQ-9 | Does the node keep a separate workspace registry (`ListWorkspaces`, `CheckWorkingCopyChanges`), or is a workspace simply an entry in the view with no extra bookkeeping? | With node-scoped names the view already answers "which workspaces exist"; a separate registry would only add `CheckWorkingCopyChanges`. Dropping it removes a surface nobody has asked for |
 | OQ-10 | Does the operation log belong in the commit cloud, or does each machine keep its own while only commits and bookmarks are shared? | Pushing an operation, the heads compare-and-swap and parked operations only exist if the log is shared; keeping it local turns the commit cloud into a content store with a remote, which is git's shape, and changes most of the write path. jj itself treats operations as local state: "Operations and views are not meant to be exchanged between repos or users; they represent local state and history" (`core/src/op_store.rs:285-286`) |
 | OQ-11 | Does the shared log carry a working-copy pointer for every workspace, or only bookmarks and heads, with each workspace's pointer local? Related: are the intermediate snapshots, whose commits amendment makes unreachable, retained as history or pruned with the operations that point at them? | If pointers are shared, every workspace's pointer merge is a conflict surface; if they are local, a workspace is only visible where it is used. Retaining intermediate snapshots turns the cloud into a reflog with a per-save archive; pruning them keeps the op log a bounded window and makes publication a visibility guarantee, not a preservation one |
-| OQ-12 | The notification channel: what it carries, whether it is a stream or a long poll, how clients subscribe and filter, and how pruning announcements reach nodes and then clients | RQ-45 needs timely updates without polling, but every published snapshot moves a pointer, so an unfiltered channel is one notification per save across every workspace of every user |
+| OQ-12 | The notification channel: what it carries, whether it is a stream or a long poll, how clients subscribe and filter, and how pruning announcements reach nodes and then clients | RQ-8-1 needs timely updates without polling, but every published snapshot moves a pointer, so an unfiltered channel is one notification per save across every workspace of every user |
 
 ---
 
