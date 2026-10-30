@@ -204,7 +204,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 32. Eviction and collection are unrelated: eviction is a local cache rule (RQ-7-5) and never an input to collection (RQ-7-4).
 33. fsync: satisfied by local durability at the node, not by the authority.
 34. Operation visibility: metadata immediately, blobs lazily, blocking read then retryable error.
-35. Offline authorization: undecided, four options documented with a recommendation.
+35. Offline authorization: undecided; the four options are listed in RQ-6-5 and the choice plus the offline window is OQ-2.
 36. The document must be readable: plain-language preamble, diagrams for flows and edge cases, self-contained appendices.
 37. Nothing is ratified. Every decision is a proposal until the operator says otherwise.
 38. The MVP is a usable version-control working copy on Linux: read and write, snapshot and propagate behind the scenes, and see other users' updates from the same node and from upstream.
