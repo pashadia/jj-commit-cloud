@@ -210,5 +210,5 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 38. The MVP is a usable version-control working copy on Linux: read and write, snapshot and propagate behind the scenes, and see other users' updates from the same node and from upstream.
 39. The VFS keeps no persistent state; transient buffers are allowed and never restored.
 40. Writes stream to the local node per call; the node acknowledges local durability; propagation is eventual and not the VFS's concern.
-41. Snapshots use a trailing debounce with a maximum age and an immediate snapshot on `fsync`/`close`; propagation runs on a separate, runtime-configurable clock.
+41. Snapshots use a trailing debounce with a maximum age and an immediate snapshot on `fsync`/`close`; propagation runs on a separate, runtime-configurable clock, whose interval is OQ-16.
 42. "Seeing other users' work" means metadata and blobs propagate up to the authority and back down; clients refresh and may pre-cache. A workspace with a working copy reconciles rather than following a bookmark; whether a read-only view may follow one is OQ-7.
