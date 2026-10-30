@@ -13,8 +13,8 @@ how this changes the requirements, §11 lists what is still undecided.
 ## 1. Bottom line
 
 Keep jj's operation log **exactly as jj intends it: local, and never
-transmitted.** Add a second, commit-cloud-specific log — a log of *observable
-change* — and propagate only that. The second log is derived from the first, so
+transmitted.** Add a second, commit-cloud-specific log — a log of _observable
+change_ — and propagate only that. The second log is derived from the first, so
 it cannot disagree with it, and jj is not modified at all.
 
 This costs a second format, a durable cursor, a rule for materialising received
@@ -33,7 +33,7 @@ Three requirements currently pull against each other:
 - **RQ-5-4** — the upstream log carries only what another client can observe; pointer moves and intermediate amendments should stay local.
 - **RQ-8-1** — a client is entitled to learn of observable change without remounting.
 
-Satisfying all three with *one* log means either publishing everything (and
+Satisfying all three with _one_ log means either publishing everything (and
 paying for pointer churn) or filtering an operation that mixes shared and local
 effects. jj makes both awkward for a structural reason: **an operation carries a
 complete view, so its shared half cannot be separated from its local half**
@@ -67,14 +67,14 @@ of object rather than a filtered copy of the local one.
 A record cannot be a view, because most of a view is local. Here is the whole
 inventory (`core/src/op_store.rs:172-194`), with the judgement that matters:
 
-| View field | What it holds | Observable by another client? |
-|---|---|---|
-| `head_ids` | the visible head commits | **Partly.** Names shared commits; the *set* is this machine's visibility rule. |
-| `local_bookmarks` | bookmark name → `RefTarget` | **No.** Local intent; others see it only after propagation or Git export. |
-| `local_tags` | tag name → `RefTarget` | **No.** Same. |
-| `remote_views` | last-seen remote positions | **No.** Explicitly a cache (`docs/bookmarks.md:63-67`). |
-| `git_refs`, `git_heads` | mirrors of Git refs | **No.** Local mirrors. |
-| `wc_commit_ids` | workspace → commit | **No.** Local workspace state. |
+| View field              | What it holds               | Observable by another client?                                                  |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| `head_ids`              | the visible head commits    | **Partly.** Names shared commits; the _set_ is this machine's visibility rule. |
+| `local_bookmarks`       | bookmark name → `RefTarget` | **No.** Local intent; others see it only after propagation or Git export.      |
+| `local_tags`            | tag name → `RefTarget`      | **No.** Same.                                                                  |
+| `remote_views`          | last-seen remote positions  | **No.** Explicitly a cache (`docs/bookmarks.md:63-67`).                        |
+| `git_refs`, `git_heads` | mirrors of Git refs         | **No.** Local mirrors.                                                         |
+| `wc_commit_ids`         | workspace → commit          | **No.** Local workspace state.                                                 |
 
 So the only genuinely shared things in a view are **the commits** and **the
 bookmark and tag targets**. That is the whole content of the shared log.
@@ -95,7 +95,7 @@ Record {
 ```
 
 `RefTarget` is `Merge<Option<CommitId>>` (`core/src/op_store.rs:63-64`), so a
-record can express a *conflicted* bookmark, not only a winner. `from` is
+record can express a _conflicted_ bookmark, not only a winner. `from` is
 carried so that two concurrent records touching the same ref can be merged
 against a known base.
 
@@ -111,15 +111,15 @@ line, `cli/src/cli_util.rs:3072-3114`).
 ### 5.1 Outbound: local operation → records
 
 ```
- jj op log (local, untouched)
-   op 41  snapshot        ──┐
-   op 42  snapshot        ──┤  projection
-   op 43  move @          ──┘  (compare consecutive views)
-                              │
-                              ▼
-                    only shared fields changed?
-                        no ──► advance cursor, write nothing
-                        yes ─► Record ──► upstream
+jj op log (local, untouched)
+  op 41  snapshot        ──┐
+  op 42  snapshot        ──┤  projection
+  op 43  move @          ──┘  (compare consecutive views)
+                             │
+                             ▼
+                   only shared fields changed?
+                       no ──► advance cursor, write nothing
+                       yes ─► Record ──► upstream
 ```
 
 For each operation after the cursor, the projector compares its view with the
@@ -154,14 +154,14 @@ an infinite loop between two nodes.
 
 ### 5.3 Edge cases
 
-| Case | Behaviour |
-|---|---|
-| Crash after writing a record, before advancing the cursor | The record is re-projected on restart. Records are idempotent by content hash. |
-| Crash after applying a record, before its local operation is durable | The record is re-applied; applying is "set to these targets", not "advance", so it converges. |
-| Two nodes change the same bookmark concurrently | Two records, same causal parent, different targets. Applying both yields a conflicted bookmark — jj's `merge_ref_targets` over the common base (`core/src/refs.rs:95-118`). |
-| A record arrives before the commits it names | Rejected as retryable; records may not be announced before their content (RQ-5-7). |
-| A node is offline for a week | Its records queue with the cursor; on reconnect it pushes them and pulls the rest. Nothing is dropped (RQ-5-3). |
-| The authority prunes a record | Nodes learn of it and drop it (RQ-5-5). Records already applied stay applied locally. |
+| Case                                                                 | Behaviour                                                                                                                                                                   |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Crash after writing a record, before advancing the cursor            | The record is re-projected on restart. Records are idempotent by content hash.                                                                                              |
+| Crash after applying a record, before its local operation is durable | The record is re-applied; applying is "set to these targets", not "advance", so it converges.                                                                               |
+| Two nodes change the same bookmark concurrently                      | Two records, same causal parent, different targets. Applying both yields a conflicted bookmark — jj's `merge_ref_targets` over the common base (`core/src/refs.rs:95-118`). |
+| A record arrives before the commits it names                         | Rejected as retryable; records may not be announced before their content (RQ-5-7).                                                                                          |
+| A node is offline for a week                                         | Its records queue with the cursor; on reconnect it pushes them and pulls the rest. Nothing is dropped (RQ-5-3).                                                             |
+| The authority prunes a record                                        | Nodes learn of it and drop it (RQ-5-5). Records already applied stay applied locally.                                                                                       |
 
 ---
 
@@ -169,7 +169,7 @@ an infinite loop between two nodes.
 
 Two divergent operation heads force jj to merge **views**, including workspace
 pointers, and that merge picks a side silently for pointers
-(`lib/src/repo.rs:1670-1672`). Two divergent *records* touch only refs and
+(`lib/src/repo.rs:1670-1672`). Two divergent _records_ touch only refs and
 commits, and ref merging is already a first-class, ancestry-aware operation that
 can represent disagreement instead of discarding it.
 
@@ -200,7 +200,7 @@ resulting target.
    operations, so a shared record never descends from a local-only one.
 5. **The record stream is also the change feed.** RQ-8-1's entitlement, pruning
    announcements (RQ-5-5) and removal lists (RQ-7-4) all travel as the same kind
-   of object, so `OQ-12`/`OQ-15` become questions about *how to consume* it
+   of object, so `OQ-12`/`OQ-15` become questions about _how to consume_ it
    rather than what it contains.
 6. **It fits every topology under discussion.** Whether the log lives at the
    node or at the VFS, the records are the same; §11's open question about
@@ -243,11 +243,13 @@ resulting target.
 ## 9. What implementing it entails
 
 **New state at each node**
+
 - the projection cursor (last projected local operation id);
 - the record store (records by id, plus the causal graph);
 - the inbound-applied marker, or the equivalent echo-suppression flag.
 
 **New code**
+
 1. **Record format** — encoding, content-addressed id, version tag, and a
    canonical serialisation so two nodes computing the same record get the same
    id.
@@ -262,11 +264,13 @@ resulting target.
    (RQ-7-4), which also needs the hard-removal deny-list on the receive side.
 
 **What it does not need**
+
 - Any change to `OpStore`, `OpHeadsStore`, `Backend` or `View`.
 - Any second `jj` binary.
 - Any minting, re-parenting or filtering of operations.
 
 **Testing that would actually pin the behaviour**
+
 - Project a pointer-only operation and assert **zero** records.
 - Kill the process between writing a record and advancing the cursor; assert
   exactly one effective record after restart.
@@ -286,17 +290,17 @@ the idea is wrong and nothing later matters.
 
 ## 10. What this does to the requirements
 
-| Requirement | Effect |
-|---|---|
-| **RQ-5-1** concurrent appends accepted, log forks and merges | Applies to records: they fork and refold. Simpler, because refs merge without touching workspace pointers. |
-| **RQ-5-2** merge rate kept low | Unchanged in intent; now measured on records rather than operations. |
-| **RQ-5-3** every snapshot's content reaches the authority | Satisfied by records naming commits. Whether every *snapshot* is named depends on decision (7) above. |
-| **RQ-5-4** upstream log carries only observable change | **Becomes structural** — nothing to enforce. |
-| **RQ-5-5** pruning is the authority's decision and is announced | Records carry the announcement. |
-| **RQ-7-4** soft and hard removal | Records carry the lists; hard removal also needs the receive-side deny-list. |
-| **RQ-8-1** entitled to learn of observable change | The record stream *is* the feed. `OQ-12` and `OQ-15` become questions about consumption. |
-| **OQ-10** does the operation log belong in the cloud? | Answered in a third way: **jj's log never leaves the machine; a different log is shared.** Worth recording in `OQ-10`. |
-| **OQ-13** should the upstream log carry only observable change? | Dissolved. |
+| Requirement                                                     | Effect                                                                                                                 |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **RQ-5-1** concurrent appends accepted, log forks and merges    | Applies to records: they fork and refold. Simpler, because refs merge without touching workspace pointers.             |
+| **RQ-5-2** merge rate kept low                                  | Unchanged in intent; now measured on records rather than operations.                                                   |
+| **RQ-5-3** every snapshot's content reaches the authority       | Satisfied by records naming commits. Whether every _snapshot_ is named depends on decision (7) above.                  |
+| **RQ-5-4** upstream log carries only observable change          | **Becomes structural** — nothing to enforce.                                                                           |
+| **RQ-5-5** pruning is the authority's decision and is announced | Records carry the announcement.                                                                                        |
+| **RQ-7-4** soft and hard removal                                | Records carry the lists; hard removal also needs the receive-side deny-list.                                           |
+| **RQ-8-1** entitled to learn of observable change               | The record stream _is_ the feed. `OQ-12` and `OQ-15` become questions about consumption.                               |
+| **OQ-10** does the operation log belong in the cloud?           | Answered in a third way: **jj's log never leaves the machine; a different log is shared.** Worth recording in `OQ-10`. |
+| **OQ-13** should the upstream log carry only observable change? | Dissolved.                                                                                                             |
 
 ---
 
