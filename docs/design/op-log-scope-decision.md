@@ -42,24 +42,27 @@ changes later. §7 lists what currently depends on it.
 > they represent local state and history."
 > — `core/src/op_store.rs:282-286`
 
-Consequences that follow directly:
+Consequences:
 
-- There is no wire format for operations, and no versioning or authentication
-  for one. A replicated log is new work, not a configuration change.
+- No wire format for operations exists; they are written to and read from local
+  storage. A replicated log is new work, not a configuration change.
 - Nothing in an operation identifies a repository, a client, or a position in a
-  sequence. `ViewId` and `OperationId` are content hashes that include local
-  state (`OperationMetadata.hostname`, `workspace_name`, wall-clock time), so
-  two machines produce different operation ids for the same logical change.
+  sequence. Normal `ViewId` and `OperationId` values are content hashes, and
+  `OperationId` includes local metadata (`hostname`, `workspace_name`,
+  wall-clock time), so two machines produce different ids for the same logical
+  change. The synthetic root operation and root view use fixed zero ids.
 
 ### 3.2 An operation references a complete view, not a diff
 
 Each operation stores `view_id` and points at a stored view object
-(`core/src/op_store.rs:294-320`). The view is the whole state of the
-repository's pointers, not the delta from its parent. `jj op diff` computes a
-difference by comparing two views.
+(`core/src/op_store.rs:294-320`). "Complete" means complete heads, bookmarks,
+tags, remembered remote positions and workspace pointers — not commit or tree
+data. `jj op diff` computes a difference by comparing two views.
 
-The operation object does carry one diff-like field — `commit_predecessors`,
-which maps rewritten commits to their predecessors — but it is not a view delta.
+The operation object also carries `commit_predecessors`, which maps rewritten
+commits to their predecessors. It is optional (absent for operations written
+before jj 0.30) and records commit rewrites only, not ref or pointer changes, so
+it is not a view delta.
 
 Direct consequence: **a view cannot be partially replicated.** Replicating an
 operation replicates all of its view.
@@ -74,12 +77,14 @@ operation replicates all of its view.
 | 2 | `local_bookmarks` | `BTreeMap<RefNameBuf, RefTarget>` | Local bookmark names and targets. Targets may be conflicted. |
 | 3 | `local_tags` | `BTreeMap<RefNameBuf, RefTarget>` | Local tags, same shape. |
 | 4 | `remote_views` | `BTreeMap<RemoteNameBuf, RemoteView>` | Last known position of each remote's bookmarks and tags, plus a tracked/untracked state per ref. A remembered state, not an authority (`docs/bookmarks.md:63-67`). |
-| 5 | `git_refs` | `BTreeMap<GitRefNameBuf, RefTarget>` | Refs mirrored to or from an underlying Git repository. |
-| 6 | `git_heads` | `BTreeMap<WorkspaceNameBuf, RefTarget>` | The commit each workspace's Git `HEAD` points at. |
+| 5 | `git_refs` | `BTreeMap<GitRefNameBuf, RefTarget>` | jj's remembered subset of Git refs, updated by import and export. Not a live mirror: some refs are excluded, e.g. `refs/notes/` (`lib/src/protos/simple_op_store.proto:105-106`). |
+| 6 | `git_heads` | `BTreeMap<WorkspaceNameBuf, RefTarget>` | The commit each workspace's Git `HEAD` points at. A ref target, so it may be conflicted or absent. |
 | 7 | `wc_commit_ids` | `BTreeMap<WorkspaceNameBuf, CommitId>` | The commit each workspace should have checked out. The working-copy directory holds which commit is actually checked out. |
 
 `RefTarget` is `Merge<Option<CommitId>>` (`core/src/op_store.rs:63-64`), so a
-bookmark can hold several candidate commits instead of one.
+bookmark can hold several candidate commits instead of one. Types are those of
+`op_store::View`; the in-memory wrapper adds one non-persisted flag
+(`core/src/view.rs:44-49`).
 
 ### 3.4 The fields fall into three categories
 
@@ -87,14 +92,15 @@ This grouping is analytic; it is not in the source.
 
 | Category | Fields | Property |
 |---|---|---|
-| Repository content pointers | 1–3 | Describe where history and named refs are. Meaningful to any machine with the commits. |
-| Mirrors of another system | 4–5 | Cache what a remote or a Git repository last reported. Meaningful only as a cache. |
-| Per-machine working state | 6–7 | Identify which commit a named workspace is looking at. Meaningful only on the machine hosting that workspace. |
+| Repository content pointers | 1–3 | Where history and named refs are. Meaningful to any machine that has the commits. `head_ids` is the visible-head set, not a named ref. |
+| Mirrors of another system | 4–6 | What a remote or a Git repository last reported. `git_heads` belongs here rather than with working state: in a colocated repository it usually names the parent of the checked-out commit, it merges as a ref target, and `jj undo` does not restore it. |
+| Workspace checkout pointer | 7 | The commit a named workspace should have checked out. The working-copy directory holds which commit is actually checked out. |
 
-A single snapshot transaction changes fields from more than one category: the
-working-copy commit changes (category 3) and a new commit becomes a head
-(category 1). This is the mechanical reason the replication decision is not a
-clean split: the categories are interleaved in one object per operation.
+A snapshot transaction changes fields from more than one category: it writes a
+new working-copy commit and records it in `head_ids` and `wc_commit_ids` in the
+same transaction (`cli/src/cli_util.rs:2208-2243`); in a colocated repository the
+same transaction may also update `git_heads` and `git_refs`. Replication cannot
+be decided per category without splitting a single operation.
 
 ---
 
@@ -127,7 +133,9 @@ its own operation log, containing its own snapshots and pointer moves.
 - **Bandwidth:** on publish, the blobs and trees not already present.
 - **Breaks:** unpublished work is invisible; loss of a machine loses everything
   not yet published; no cross-machine history; an operation id from another
-  machine cannot be resolved.
+  machine cannot be resolved. A conflicted bookmark has no Git representation:
+  export skips it and leaves the previous ref in place
+  (`lib/src/git.rs:1672-1677`).
 - **Implementation status:** this is the shape jj already has, with a Git remote
   replaced by the server. The ref export/import path exists
   (`lib/src/git.rs:399-422` for the ref-name mapping); a native transport is new
@@ -183,14 +191,23 @@ every pointer move. One log, resolved identically everywhere.
   revert an operation performed elsewhere; any snapshot is available with its
   refs; `jj op log` is identical on all machines.
 - **Storage at the server:** proportional to the aggregate rate of *saving*.
-  Two consequences that are easy to miss:
-  - Views are content-addressed, so identical views store once — but
-    consecutive snapshots are not identical, because the working-copy pointer
-    differs. Deduplication does not reduce the per-save cost.
-  - The operation object is small; the view is the bulk of the payload.
-  - Placeholder arithmetic: one workspace saving once every 1–3 seconds for
-    8 hours produces 10,000–30,000 operations per day, assuming continuous
-    activity and no debouncing. Real rates depend on the snapshot policy.
+  - An operation stores a view id; the view is a separate object. Views are
+    content-addressed, so identical views store once — but consecutive
+    snapshots differ in `head_ids` and `wc_commit_ids`, so deduplication does
+    not reduce the per-save cost.
+  - Size: a view is dominated by ref names and targets. A scratch repository
+    with 50 bookmarks produced an 8.8 KB view including Git and remote refs;
+    without those, expect a few KB. Order of magnitude 10^3–10^4 bytes per
+    view, plus a few hundred bytes per operation record. Estimate from one
+    measurement, not a benchmark.
+  - Rate: 10,000–30,000 operations per day corresponds to one snapshot every
+    1–3 seconds for 8 hours. That requires continuous activity, a tree change
+    on every snapshot, one operation per save, and no debouncing or coalescing.
+    It is the rate of a configured background-snapshot workflow, not of "the
+    user saved a file": stock jj snapshots when a command runs, and the
+    filesystem-monitor trigger coalesces events.
+  - Combined: at those rates, on the order of 10^8 bytes (tens to a few hundred
+    megabytes) of view data per active workspace per day, before pruning.
 - **Breaks:** operation ids contain local metadata, so a replicated log is not
   deduplicated across machines for identical logical changes. Concurrent
   operations must be merged on receipt; the merge rule for working-copy pointers
@@ -214,25 +231,32 @@ every pointer move. One log, resolved identically everywhere.
 
 ---
 
-## 5. A merge property that constrains options 3–5
+## 5. Two properties that constrain options 3–5
 
-When two views disagree about a working-copy pointer, jj resolves the
-disagreement by keeping one side. `merge_wc_commit` keeps `self_id` unless one
-side is absent or a trivial merge applies (`lib/src/repo.rs:1650-1677`); the
-"self" side is the earlier operation by end time, because divergent heads are
-sorted by end time before merging (`lib/src/op_heads_store.rs:154`). There is no
-conflict object and no user prompt for a pointer.
+### 5.1 Working-copy pointers have a tie-break, not a merge
 
-Relevant to this decision: any option that replicates working-copy pointers
-(options 3–5) replicates a quantity that has a **tie-break but no merge**. Two
-machines editing the same workspace concurrently do not produce a mergeable
-state; they produce a winner determined by timing.
+When two views disagree about a `wc_commit_ids` entry, `merge_wc_commit` keeps
+`self_id` unless one side is absent or a trivial merge applies
+(`lib/src/repo.rs:1650-1676`). "Self" is the view being merged into: the local
+view during a transaction, and during automatic reconciliation the earliest head
+by end time, after which the remaining heads are merged in order
+(`lib/src/repo.rs:883`, `lib/src/op_heads_store.rs:154`). No conflict object is
+created and no user is asked. The winner is determined by operation end times,
+not by which machine is local.
 
-Ref targets behave differently: `merge_ref_targets` is ancestry-aware and can
-represent a genuine disagreement as a conflicted bookmark
-(`core/src/refs.rs:95-118`).
+`git_heads` behaves differently: it is merged with `merge_ref_targets` and can
+remain conflicted (`lib/src/repo.rs:2072-2078`).
 
----
+Consequence: any option that replicates `wc_commit_ids` replicates a value with
+a timing-based tie-break and no content merge.
+
+### 5.2 Workspace names are the only key, and there is no machine identity
+
+Every per-workspace map is keyed by workspace name (`core/src/op_store.rs:186-193`).
+A view carries no machine identifier. Two machines that both use a workspace
+named, for example, `default` occupy the same map entry when their views meet;
+two differently named workspaces travel as separate entries. Replicating views
+without changing the key makes workspace identity repository-global.
 
 ## 6. Decisions required
 
@@ -306,8 +330,12 @@ shape per option:
 - View fields and types: `core/src/op_store.rs:172-194`.
 - `RefTarget` definition: `core/src/op_store.rs:63-64`.
 - Operation structure: `core/src/op_store.rs:294-320`.
-- Working-copy pointer merge rule: `lib/src/repo.rs:1650-1677`,
+- Working-copy pointer merge rule: `lib/src/repo.rs:1650-1676`, `lib/src/repo.rs:883`,
   `lib/src/op_heads_store.rs:154`.
+- Git-head merge rule (ref-target semantics): `lib/src/repo.rs:2072-2078`.
+- Snapshot transaction touching heads and pointer together:
+  `cli/src/cli_util.rs:2208-2243`.
+- Conflicted bookmarks skipped on Git export: `lib/src/git.rs:1672-1677`.
 - Ref target merge: `core/src/refs.rs:95-118`.
 - Remote views are a remembered state: `docs/bookmarks.md:63-67`.
 - Operation log and undo: `docs/operation-log.md`.
