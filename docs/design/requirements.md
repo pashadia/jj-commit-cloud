@@ -4,7 +4,7 @@
 
 **Status.** No design decision is ratified. This document is not a decision record: it is the set of requirements the decisions have to serve. A requirement marked **(derived)** was not stated word for word; it follows from something that was, and is flagged so it can be struck.
 
-**How to correct it.** Strike a requirement, rewrite it, or add one. Each is numbered so it can be cited as `RQ-n` in review or in the design.
+**How to correct it.** Strike a requirement, rewrite it, or add one. Each is numbered so it can be cited by section and position, as `RQ-<section>-<index>`, in review or in the design.
 
 ---
 
@@ -39,8 +39,8 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-3-7** Workspaces are **unique by construction**, and a workspace is a pointer in the view, not a lock.
   - *Unique.* A workspace is named for the node that owns it, so two nodes cannot name the same workspace. Copying a workspace to another node creates a **new** workspace at a commit, not a second writer of the same one. A node's identity is generated once, is stable across restarts, and must not be copied with its data; a duplicate identity is a configuration error that the node should refuse rather than half-support.
   - *Pointer.* The view maps a workspace name to a working-copy commit. There is no lease, fence or ownership anywhere in the repository, and none is added. A node admits one writer per workspace at a time; that admission is in-process and is the only lock in the system.
-  - *Why the rule exists.* If two nodes did share a name, `merge_wc_commit` would keep one side silently — the operation that finished first — and the other client's working copy would be reported stale. Nothing would be lost: the losing commit stays in the graph. The failure is merely confusing, so it is designed out rather than handled.
-- **RQ-3-8** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(This replaces the opaque, server-assigned id: today the client may pass `repo_id` and the server otherwise assigns one, `lib/src/cc_backend.rs:55-64`.)*
+  - *Why the rule exists.* If two nodes did share a name, `merge_wc_commit` (`lib/src/repo.rs:1650-1677`) would keep one side silently — divergent heads are merged in order of end time (`lib/src/op_heads_store.rs:154`), so the first operation to finish wins — and the other client's working copy would be reported stale. Nothing would be lost: the losing commit stays in the graph. The failure is merely confusing, so it is designed out rather than handled.
+- **RQ-3-8** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(This replaces the opaque, server-assigned id: today the client may pass `repo_id` (`lib/src/cc_backend.rs:55-67`) and the server otherwise assigns one (`server/src/backend.rs:53,79`).)*
 
 ## 4. Reads
 
@@ -182,7 +182,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 11. Offline: accept writes and reconcile later, after being shown the drawbacks.
 12. Read-write, not read-only. The debounce sits on the snapshot path, never on the acknowledgement path.
 13. Latency targets: metadata near-instant, blobs best effort; concrete numbers are placeholders.
-14. Layers above the node: colo/edge, then forge. Arbitrary depth, stores configurable per instance.
+14. Layers above the node: colo, then forge. Arbitrary depth, stores configurable per instance.
 15. No hard constraints from the cloud team lead. New dependencies allowed. Do not reuse `daemon`.
 16. Exactly two roles, no edge role, roles per repository.
 17. An authority with no upstream is first-class.

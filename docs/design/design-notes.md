@@ -2,7 +2,7 @@
 
 **What this is.** The first design document and its review are being deleted. This file keeps the parts of them that are not tied to that document's structure: the option space, the trade-offs that were argued once, invariants worth testing in any design, a failure checklist, and the defects that must not recur. It is an input to the next design, not a design, and nothing in it is ratified.
 
-**What was deleted, and why.** `multi-tier-commit-cloud.md` described a system with per-workspace leases, server-assigned repository ids, and a shared log that grew with every snapshot. Three later requirements removed its footings: workspaces are pointers with node-scoped names (RQ-3-7), identity is authority-scoped and chosen (RQ-3-8), and local history is separate from published history (RQ-5-2). With those gone, the document's fences, `LEASE_SUPERSEDED` path, origin-switch rules and per-snapshot publication all described machinery that no longer exists.
+**What was deleted, and why.** `multi-tier-commit-cloud.md` described a system with per-workspace leases, server-assigned repository ids, and a shared log that grew with every snapshot. Three later requirements removed its footings: workspaces are pointers with node-scoped names (RQ-3-7), identity is authority-scoped and chosen (RQ-3-8), and local history is separate from published history (RQ-5-3). With those gone, the document's fences, `LEASE_SUPERSEDED` path, origin-switch rules and per-snapshot publication all described machinery that no longer exists.
 
 ---
 
