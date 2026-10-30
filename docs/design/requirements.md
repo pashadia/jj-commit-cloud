@@ -26,7 +26,7 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-2** Metadata reads are served from the local node and are near-instant. A `stat`, a directory listing or a history view must not depend on a network round trip.
 - **RQ-3** File contents are served locally when the node has them. When it does not, the read blocks for a bounded time and then returns a retryable error; it never returns a partial or torn file.
 - **RQ-4** Work continues while disconnected, **including writes**. Offline work is reconciled later without loss and without silent rewriting.
-- **RQ-5** The same design works at any tier depth with the same binary. Depth is configuration, not a different architecture.
+- **RQ-5** The same design works at any depth, with the same binary. Depth is a property of who points at whom, not a separate architecture: a node's tier is derived, being 0 for the authority and one more than its upstream otherwise.
 
 ## 3. Roles and topology
 
@@ -36,7 +36,10 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-9** A replica has exactly one upstream for that repo, is **not durable**, may be emptied wholesale at any time, and is never a backup.
 - **RQ-10** Topology for v1 is a tree: one upstream per (node, repo). Multi-upstream and fan-in are deferred, but must not be structurally foreclosed.
 - **RQ-11** One node serves N repositories and M mounts. Multi-user machines are supported with per-user isolation.
-- **RQ-12** A workspace is a **pointer, not a lock**. Its entry in the view maps a workspace name to a working-copy commit; two nodes may advance it at once, and the merge keeps one value. jj-lib's `merge_wc_commit` keeps the side whose operation finished first and never records a conflict for a workspace pointer, as it does for bookmarks. No commit is lost: the other writer's commit remains in the graph, and the client whose pointer lost is told its working copy is stale and reconciles locally. Nothing in the system leases, fences or owns a workspace. Workspace identity is therefore **unique by construction rather than by negotiation**: a workspace is named for the node that owns it, and copying a workspace to another node creates a *new* workspace at a commit rather than a second writer of the same one. A node admits one writer per workspace locally; that is the only lock in the system, and it is in-process, not distributed.
+- **RQ-12** Workspaces are **unique by construction**, and a workspace is a pointer in the view, not a lock.
+  - *Unique.* A workspace is named for the node that owns it, so two nodes cannot name the same workspace. Copying a workspace to another node creates a **new** workspace at a commit, not a second writer of the same one. A node's identity is generated once, is stable across restarts, and must not be copied with its data; a duplicate identity is a configuration error that the node should refuse rather than half-support.
+  - *Pointer.* The view maps a workspace name to a working-copy commit. There is no lease, fence or ownership anywhere in the repository, and none is added. A node admits one writer per workspace at a time; that admission is in-process and is the only lock in the system.
+  - *Why the rule exists.* If two nodes did share a name, `merge_wc_commit` would keep one side silently — the operation that finished first — and the other client's working copy would be reported stale. Nothing would be lost: the losing commit stays in the graph. The failure is merely confusing, so it is designed out rather than handled.
 - **RQ-13** Repository identity is human-chosen and authority-scoped, in the shape a forge uses: `<authority>/<owner>/<name>`. The creator picks it when the repository is registered, and the authority enforces uniqueness within itself. Transport is **not** part of identity: the same repository reached over a Unix socket and over HTTPS is one repository, while a different authority is a different repository. Renaming is out of scope for the MVP. *(Contradicts the proposal's D18, which makes the id opaque and server-assigned. Today's code lets the client pass `repo_id` and falls back to server assignment: `lib/src/cc_backend.rs:55-64`.)*
 
 ## 4. Reads
@@ -67,9 +70,9 @@ Other people's work flows the other way: up to the authority, then back down to 
 ## 6. Offline work
 
 - **RQ-33** A replica accepts writes while disconnected and reconciles later. Anything not yet in authority custody is dirty and immune to eviction.
-- **RQ-34** A node holding dirty state may not switch origin and may not be emptied wholesale until drained or explicitly abandoned. Abandonment returns an inventory and is recorded.
+- **RQ-34** A node holding dirty state may neither be emptied wholesale nor be re-bound to a different repository identity until that state is drained or explicitly abandoned. Abandonment returns an inventory and is recorded. *(There is no "origin switch" any more: identity includes the authority, so a different authority is a different repository.)*
 - **RQ-35** Sync state is a first-class, user-visible concept: pending counts, pending bytes, age, parked operations and their reasons.
-- **RQ-36** Reconciliation has exactly three outcomes per operation — applied, parked, or rejected for missing blobs — and only "applied" clears dirty.
+- **RQ-36** Reconciliation has exactly three outcomes per operation — applied, parked, or rejected with a reason (missing blobs, a collected base, authorization, protocol version) — and only "applied" clears dirty.
 - **RQ-37** Offline authorization is **undecided**. Four options are on the table (strict deny, bounded read-only grace, a signed repo-and-user-scoped TTL grant, a local trust boundary); writes while offline always require valid, unexpired authorization.
 
 ## 7. Storage, keys and reclamation
@@ -78,14 +81,14 @@ Other people's work flows the other way: up to the authority, then back down to 
 - **RQ-39** For v1 the storage unit is one file per object. Packing, segmentation and key-value storage are deferred, and the trade-offs must be written down rather than decided silently.
 - **RQ-40** Store (durable, authoritative) and Cache (evictable, rebuildable) are distinct. The trait boundaries stay in the design, but the MVP ships **one** implementation of each.
 - **RQ-41** jj's local index is not replicated. The authority may expose an optional opaque, version-tagged checkpoint; a replica may use it only if it validates, and must otherwise rebuild. The MVP rebuilds.
-- **RQ-42** Garbage collection runs only at the authority. Its input is reachability from heads plus parked lineages plus live snapshot holds plus a retention window. Client pins are never an input.
+- **RQ-42** Garbage collection runs only at the authority. Its input is reachability from heads, plus parked lineages, plus live snapshot holds, plus any custody the authority has already granted, plus a retention window. Client cache hints are never an input. *(The custody term is derived: an acknowledgement is a promise, and retention must last at least as long as the promise.)*
 - **RQ-43** Eviction is least-recently-used by bytes, with dirty data never evicted. Retention must exceed the offline window or an offline replica will push onto a collected base.
 
 ## 8. Coherence and live updates
 
 - **RQ-44** Synchronization is server push over gRPC streaming, not polling: new operations, head changes, blobs becoming available, replica lag.
 - **RQ-45** A client sees operations from other clients on the same node **and** operations that arrive from upstream, without remounting.
-- **RQ-46** On a new head, clients refresh metadata and may prefetch the blobs they will need.
+- **RQ-46** On a new head, clients refresh their metadata so that reads resolve to the new operation. Warming the cache ahead of a read is optional and deferred (RQ-20).
 - **RQ-47** A bookmark advanced elsewhere propagates up to the authority and then down to every subscribed client.
 
 ## 9. The mount is a working copy
@@ -146,16 +149,16 @@ Stated as out of scope now, without prejudice to later phases:
 | # | Question | Why it blocks |
 |---|---|---|
 | OQ-1 | Custody acknowledgement: is `provisional` a flag on the three levels, or a fourth level? | Changes the wire shape; rejecting the idea means offline writes are refused |
-| OQ-2 | Offline authorization: which of the four options, and what is the maximum offline write window? | Sets the residual access of a revoked user, and the `lease_ttl` bound |
+| OQ-2 | Offline authorization: which of the four options, and what is the maximum offline write window? | Sets the residual access of a revoked user, and how long a node may keep writing without contacting the authority |
 | OQ-3 | FUSE error for a stale snapshot: `ESTALE` or `EAGAIN`? | Determines whether a long-running tool survives a snapshot rollover |
 | OQ-4 | Announcement at a replica: "durable at the announcing node" (impossible for a replica) versus "locally fsynced or in authority custody" | Strict reading makes offline commits invisible to others until reconnect |
 | OQ-5 | Accept that authority disk loss without an upstream means repo loss, or bring backup into scope? | One sentence to accept, a subsystem to avoid |
 | OQ-6 | **Who constructs an operation:** the node, against its current head, or the client, against whatever base it last saw | Node-built keeps every hop's log linear and makes merges an offline edge case. Client-built makes a fork at the node for every stale base, so merge-and-park becomes steady state and the loser rewrites an id |
 | OQ-7 | What "tracking a bookmark" means: a read-only view that moves with the bookmark, or the workspace itself following it | A view can change under a reader; a working copy cannot |
 | OQ-8 | Mount layout: is the mount root the working copy, or does the mount expose a directory of workspaces each containing one? | Decides path resolution in the VFS, inode identity across workspaces, and where the CLI expects `.jj`. It must be settled before the write protocol is specified |
-| OQ-9 | Does the node keep the workspace registry (`ListWorkspaces`, `CheckWorkingCopyChanges`), or is the workspace purely local apart from its fence? | The registry exists today; keeping it makes the fence natural, dropping it removes a cross-machine listing everyone may expect |
-| OQ-11 | Does the shared log carry a working-copy pointer for every workspace, or only bookmarks and heads, with each workspace's pointer local? | With node-scoped workspace names the pointers can never collide, so the merge question is moot and either choice is safe. What remains is growth: one entry per workspace in every operation's view. If that becomes material, pointers move out of the shared view |
+| OQ-9 | Does the node keep a separate workspace registry (`ListWorkspaces`, `CheckWorkingCopyChanges`), or is a workspace simply an entry in the view with no extra bookkeeping? | With node-scoped names the view already answers "which workspaces exist"; a separate registry would only add `CheckWorkingCopyChanges`. Dropping it removes a surface nobody has asked for |
 | OQ-10 | Does the operation log belong in the commit cloud, or does each machine keep its own while only commits and bookmarks are shared? | The design's convergence story — pushing an operation, heads compare-and-swap, parked operations — assumes a shared op log. Keeping it local turns the commit cloud into a content store with a remote, which is git's shape, and changes the shape of most of the write path |
+| OQ-11 | Does the shared log carry a working-copy pointer for every workspace, or only bookmarks and heads, with each workspace's pointer local? | With node-scoped workspace names the pointers can never collide, so the merge question is moot and either choice is safe. What remains is growth: one entry per workspace in every operation's view. If that becomes material, pointers move out of the shared view |
 
 ---
 
@@ -166,15 +169,15 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 1. Where the cache lives: a locally running commit-cloud node. The VFS holds no persistent cache. Unix socket, not loopback.
 2. The CLI uses the same backend, and has always done so. CLI-to-VFS coordination is out of scope.
 3. The two repositories share no caching contract; the commit cloud is simply a backend for each.
-4. Object scope: metadata and blobs. VFS snapshots are a separate concern, now in scope as a working copy rather than as snapshot tooling.
+4. Object scope: metadata and blobs. The mount is now a working copy, so VFS snapshot capture is in scope; VFS tooling for browsing snapshots is not.
 5. Pluggable stores are a later concern: SQLite or Spanner for metadata, files or GCS for blobs.
 6. Hashing is content-based, SHA-256 by operator instruction, with the id-width cost acknowledged.
 7. One file per object in v1; packing is deferred with its trade-offs written down.
 8. Snapshots are immutable; revisions evolve; bookmarks can be immutable; the authority enforces it.
-9. Staleness: metadata always local, blobs best effort, pinned snapshots, no tearing, explicit retryable stale error.
+9. Staleness: metadata always local, blobs best effort, a held operation per read sequence, no tearing, explicit retryable stale error.
 10. Clients learn of new operations by server push.
 11. Offline: accept writes and reconcile later, after being shown the drawbacks.
-12. Read-write, not read-only. Debounce belongs to the client side of the boundary, never to the acknowledgement path.
+12. Read-write, not read-only. The debounce sits on the snapshot path, never on the acknowledgement path.
 13. Latency targets: metadata near-instant, blobs best effort; concrete numbers are placeholders.
 14. Layers above the node: colo/edge, then forge. Arbitrary depth, stores configurable per instance.
 15. No hard constraints from the cloud team lead. New dependencies allowed. Do not reuse `daemon`.
@@ -182,8 +185,8 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 17. An authority with no upstream is first-class.
 18. Multiple upstreams are conceptually allowed and deferred in detail.
 19. A node serves many repositories and many mounts, multi-user.
-20. Concurrent writers on one workspace: impossible by design.
-21. Reads are pinned, and a stale token may error rather than tear.
+20. Concurrent writers on one workspace: impossible by construction, because a workspace belongs to one node and that node admits one writer at a time.
+21. Reads are held to one operation, and a stale hold may error rather than tear.
 22. Partitioned writes are accepted and reconciled; the drawbacks were explained and accepted.
 23. "In sync" means divergent trees eventually replicate; the VFS is notified by push.
 24. Metadata is durable with explicit acknowledgements; blobs are eventually consistent.
@@ -191,7 +194,7 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 26. Dirty data is never evicted.
 27. The index is not replicated; an optional validated checkpoint is allowed and documented.
 28. Store and cache are one abstraction with a shared trait where that is sound.
-29. Repository identity is server-assigned.
+29. Repository identity is chosen by the creator and scoped to the authority (`<authority>/<owner>/<name>`); the authority enforces uniqueness, and transport is not part of it. (The earlier answer, "server-assigned id", is superseded.)
 30. Identity is delegated and propagated; replicas refuse unauthorized clients; per-user namespaces.
 31. Deliverable shape: one design document plus a deferred-decisions section, in `docs/design/`.
 32. Pins are subscription-stream based and order eviction only; GC ignores them.
@@ -204,4 +207,4 @@ These have been asked and answered. Do not re-ask them. Answering is not ratifyi
 39. The VFS keeps no persistent state; transient buffers are allowed and never restored.
 40. Writes stream to the local node per call; the node acknowledges local durability; propagation is eventual and not the VFS's concern.
 41. Snapshots use a trailing debounce with a maximum age and an immediate snapshot on `fsync`/`close`; propagation runs on a separate, runtime-configurable clock.
-42. "Seeing other users' work" means metadata and blobs propagate up to the authority and back down; clients refresh and may pre-cache. A workspace with a working copy reconciles rather than following a bookmark.
+42. "Seeing other users' work" means metadata and blobs propagate up to the authority and back down; clients refresh and may pre-cache. A workspace with a working copy reconciles rather than following a bookmark; whether a read-only view may follow one is OQ-7.
