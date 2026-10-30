@@ -112,7 +112,7 @@ Keep these as test cases regardless of the final design. Each was either in the 
 - Disk loss with only local data: the loss must be reportable, and reporting it needs an inventory that exists somewhere other than the lost disk.
 - Corrupt or truncated blob at a replica: detected on serve, treated as a miss.
 - Two operations from the same parent: merged, never last-write-wins.
-- Rejected operation: parked or refused with a reason, never silently dropped.
+- Operation the receiver will not apply: refused with a reason, never silently dropped.
 - State collected under a reader: held operations survive; unheld ones may fail retryably.
 - Writer offline longer than retention: pushing onto a collected base must fail with a clear signal and a resync path.
 - Clock skew: affects grant expiry and any pointer tie-break that depends on wall time.
@@ -168,8 +168,8 @@ Verified against jj-lib 0.46.0 at `/home/bogdan/work/google-jj/jj-upstream`.
 
 ## 8. Smaller things worth keeping
 
-- **Metrics** that decide something: acknowledgement latency by level, pending count and bytes, pending age, merge rate per 1k operations, parked/conflict count and age, blob miss ratio and fetch latency, single-flight collapse ratio, corruption count, evictions while pinned, stale-read ratio, metadata bytes per file.
-- **Error taxonomy** (~20 codes worth keeping): stale state, invalid cursor, expired subscription, blob not local, blob evicted, missing blobs, head compare-and-swap conflict, immutable violation, parked operation, size mismatch, quota exhausted, corrupt blob, collected base, pending not drained, grant expired, grant stale, offline read-only, permission denied, protocol version, unimplemented. Drop fence and lease codes.
+- **Metrics** that decide something: acknowledgement latency by level, pending count and bytes, pending age, merge rate per 1k operations, conflict count and age, blob miss ratio and fetch latency, single-flight collapse ratio, corruption count, evictions while pinned, stale-read ratio, metadata bytes per file.
+- **Error taxonomy** (~20 codes worth keeping): stale state, invalid cursor, expired subscription, blob not local, blob evicted, missing blobs, head compare-and-swap conflict, immutable violation, size mismatch, quota exhausted, corrupt blob, collected base, pending not drained, grant expired, grant stale, offline read-only, permission denied, protocol version, unimplemented. Drop fence and lease codes.
 - **Reversibility**: client-computed operation identity and the two-role model are expensive to change later; visibility and holds are cheap; the key/mapping layer is expensive.
 - **Upgrade**: changing the operation envelope changes ids, so canonicalisation must freeze and an envelope change is a stop-the-world event.
 - **Evidence corrections** to carry: `common/src/lib.rs` holds the id lengths at 15–17, not 12–14; there is no `[A§15.6]` in the jj-commit-cloud brief; `jj-vfs/src/fuse.rs` maps `ENOENT`, `ENOTDIR`, `EISDIR`, `EINVAL` and falls back to `EIO`, so "EIO-only" is wrong.
