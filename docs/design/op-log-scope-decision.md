@@ -53,8 +53,10 @@ implementation, and no option is recommended.
 | **Operation**            | jj's record of one change to repository state. Contains a view id, parent operation ids, metadata, and a commit-predecessor map. |
 | **View**                 | A complete snapshot of the repository's pointers after an operation. Content-addressed, immutable.                               |
 | **Op head**              | An operation with no successor. Loading a repository resolves all heads; more than one means divergence.                         |
-| **Working-copy pointer** | The commit a named workspace has checked out. Stored in the view (`wc_commit_ids`).                                              |
+| **Working-copy pointer** | The commit a named workspace **should have** checked out. Stored in the view (`wc_commit_ids`); the working-copy directory holds which commit is actually checked out. |
 | **Ref target**           | A bookmark's or tag's value, possibly conflicted: `Merge<Option<CommitId>>`.                                                     |
+| **Save** | The moment a workspace's current contents become a commit. It happens on the client's own snapshot cadence — a debounce, a maximum age, or an explicit flush — not when a person decides to share anything. A save is local unless a cell replicates saves. |
+| **Publish** | The moment a commit becomes reachable from a bookmark or tag, and therefore part of the history other machines are meant to use. A commit may be saved many times and published once. |
 
 ---
 
@@ -279,7 +281,30 @@ Replicated: every operation from every machine, each with a complete view.
   and has no way to hold two candidates, so the persisted view and its merge
   code both change.
 
-### 4.4 Modifiers independent of the cell
+### 4.4 What each cell costs
+
+Two quantities are easy to confuse. **How much accumulates** is bytes at rest.
+**What drives the growth** is the rate of writes. A cell can be cheap at rest
+and busy in traffic, or the reverse, and only the first of the two is a capacity
+plan.
+
+| Cell | Accumulates at the server | Driven by |
+|---|---|---|
+| A | nothing | — |
+| B | published commits, trees and blobs | publishing |
+| C | every save's commit, trees and blobs, plus one record per workspace | saving |
+| D | B, plus one record per change to a commit or ref | publishing |
+| E | C, plus one record per change to a commit or ref | saving |
+| F | C's content, plus one operation record and one full view per save | saving |
+
+The difference between C and F appears only here: both replicate content at save
+rate, and F adds a view and an operation record on top of every save.
+
+Order of magnitude, from the measurement in §4.3 F: a full view is 10^3–10^4
+bytes; a commit with its changed trees is normally smaller. F therefore costs
+roughly one view per save above C's content.
+
+### 4.5 Modifiers independent of the cell
 
 - **Retention.** Any replicated history may be kept indefinitely, for a window,
   or until an explicit prune. Retention determines what "the server has it"
@@ -347,18 +372,19 @@ refs → **D** or **E**. History of every change → **F**.
 
 ### 6.2 What each cell implies
 
-| Cell | Operation id resolves elsewhere | Undo another machine's action | Survives loss of a machine | Works while the server is unreachable | Storage grows with | Unpublished work visible |
-|---|---|---|---|---|---|---|
-| **A** | no | no | nothing | yes | nothing | no |
-| **B** | no | no | published work | yes | publishing | no |
-| **C** | no | no | work since the last save | yes | saving | content and position |
-| **D** | no | no | published work | yes | publishing | no |
-| **E** | no | no | work since the last save | yes | saving + records | content and position |
-| **F** | yes | yes | work since the last save | no | saving | content and position |
+| Cell | Operation id resolves elsewhere | Undo another machine's action | Survives loss of a machine | Works while the server is unreachable | Unpublished work visible |
+|---|---|---|---|---|---|
+| **A** | no | no | nothing | yes | no |
+| **B** | no | no | published work | yes | no |
+| **C** | no | no | work since the last save | yes | content and position |
+| **D** | no | no | published work | yes | no |
+| **E** | no | no | work since the last save | yes | content and position |
+| **F** | yes | yes | work since the last save | no | content and position |
 
 "Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
 id identifies an operation, and only a repository of operations can answer for
-it. That is why only F satisfies it.
+it. That is why only F satisfies it. Storage is absent from this table because
+it measures bytes rather than behaviour; §4.4 compares it directly.
 
 ### 6.3 Decisions independent of the cell
 
