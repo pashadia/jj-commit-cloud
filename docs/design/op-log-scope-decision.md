@@ -222,7 +222,7 @@ restored.
   per pointer movement. Content dominates.
 - Breaks: no record of how a workspace reached its position. Only the current
   commit is named, so an amended version is replaced rather than kept.
-- Status: new. Needs a record type, a two-way merge rule for positions (§5.1),
+- Status: new. Needs a record type, a two-way merge rule for positions (§5.2),
   and a rule for who may move a position.
 
 **D — content and refs, history of commits and refs.**
@@ -238,7 +238,7 @@ Replicated: B, plus an ordered record of changes to commits and refs.
   a cursor marking how far the projection has advanced.
 
 **E — content, refs and positions, history of commits and refs.**
-C plus D. Costs are additive, and the two-way merge of §5.1 applies to every
+C plus D. Costs are additive, and the two-way merge of §5.2 applies to every
 replicated position.
 
 **F — history of every change.**
@@ -266,7 +266,7 @@ Replicated: every operation from every machine, each with a complete view.
     megabytes) of view data per active workspace per day, before pruning.
 - Breaks: operation ids contain local metadata, so identical logical changes are
   not deduplicated across machines; concurrent operations must be merged on
-  receipt, and that merge is the two-way merge of positions required by §5.1 —
+  receipt, and that merge is the two-way merge of positions required by §5.2 —
   not jj's end-time tie-break. The consequence is disproportionate: with every
   operation replicated, divergent heads stop being an exception, so every load
   reconciles views and the merge runs on the path every command takes. jj's
@@ -276,7 +276,7 @@ Replicated: every operation from every machine, each with a complete view.
   `OpHeadsStore` are traits, so a network-backed implementation is possible, and
   the stock `jj` binary registers only built-in implementations
   (`cli/src/cli_util.rs:4137`), so this requires either a custom binary or an
-  upstream change. Separately, §5.1's two-way merge cannot be performed on the
+  upstream change. Separately, §5.2's two-way merge cannot be performed on the
   current representation: `wc_commit_ids` maps each workspace to a single commit
   and has no way to hold two candidates, so the persisted view and its merge
   code both change.
@@ -314,30 +314,7 @@ roughly one view per snapshot above C's content.
 
 ## 5. Two properties that constrain cells C, E and F
 
-### 5.1 Working-copy pointers have a tie-break, not a merge
-
-When two views disagree about a `wc_commit_ids` entry, `merge_wc_commit` keeps
-`self_id` unless one side is absent or a trivial merge applies
-(`lib/src/repo.rs:1650-1676`). "Self" is the view being merged into: reconciliation
-orders divergent heads by end time and merges each later one into the earliest,
-so the earliest head's value is kept (`lib/src/repo.rs:883`,
-`lib/src/op_heads_store.rs:154`). No conflict object is
-created and no user is asked. The winner is determined by operation end times,
-not by which machine is local.
-
-`git_heads`, the other per-workspace field, merges as a ref target and can
-remain conflicted (`lib/src/repo.rs:2102-2108`), but it is populated only under
-Git interoperation.
-
-Consequence: cells C, E and F cannot inherit that rule. A replicated workspace
-position needs a representation that can hold both sides of a disagreement, and
-an explicit two-way merge over them — the shape jj already uses for a conflicted
-bookmark, rather than the end-time tie-break `merge_wc_commit` applies. A
-timing-based resolution is defensible for one machine reconciling its own
-operations; it is not defensible as the cloud's merge rule, because the loser is
-chosen by clock skew rather than by anything a person can inspect.
-
-### 5.2 Workspace names are the only key, and there is no machine identity
+### 5.1 Workspace names are the only key, and there is no machine identity
 
 Every per-workspace map is keyed by workspace name (`core/src/op_store.rs:186-193`).
 A view carries no machine identifier. Two machines that both use a workspace
@@ -356,7 +333,34 @@ The costs are explicit: machine identity becomes visible in a user-facing
 identifier, and renaming or replacing a machine renames its workspaces, leaving
 the old entries behind. The alternative is worse — a silent collision in which
 two machines' workspaces share one map entry and one of them is discarded by
-§5.1's tie-break.
+§5.2's tie-break.
+
+### 5.2 A shared position has several writers, so it needs a merge
+
+A name is unique to a workspace, not to a machine: the same workspace may be
+checked out on more than one machine, and then its position has more than one
+writer.
+
+When two views disagree about a `wc_commit_ids` entry, `merge_wc_commit` keeps
+`self_id` unless one side is absent or a trivial merge applies
+(`lib/src/repo.rs:1650-1676`). "Self" is the view being merged into:
+reconciliation orders divergent heads by end time and merges each later one into
+the earliest, so the earliest head's value is kept (`lib/src/repo.rs:883`,
+`lib/src/op_heads_store.rs:154`). No conflict object is created and no user is
+asked. The winner is determined by operation end times,
+not by which machine is local.
+
+`git_heads`, the other per-workspace field, merges as a ref target and can
+remain conflicted (`lib/src/repo.rs:2102-2108`), but it is populated only under
+Git interoperation.
+
+Consequence: cells C, E and F cannot inherit that rule. A replicated workspace
+position needs a representation that can hold both sides of a disagreement, and
+an explicit two-way merge over them — the shape jj already uses for a conflicted
+bookmark, rather than the end-time tie-break `merge_wc_commit` applies. A
+timing-based resolution is defensible for one machine reconciling its own
+operations; it is not defensible as the cloud's merge rule, because the loser is
+chosen by clock skew rather than by anything a person can inspect.
 
 ## 6. Decisions required
 
@@ -364,7 +368,7 @@ two machines' workspaces share one map entry and one of them is discarded by
 
 **Choice 1 — breadth.** Are working-copy positions stored, or only the
 repository? Content and refs → **B** or **D**. Content, refs and positions →
-**C**, **E** or **F**, and the two-way merge of §5.1 becomes part of the
+**C**, **E** or **F**, and the two-way merge of §5.2 becomes part of the
 system's behaviour.
 
 **Choice 2 — depth.** Current state only → **B** or **C**. History of commits and
