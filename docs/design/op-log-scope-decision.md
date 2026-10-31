@@ -272,16 +272,32 @@ not by which machine is local.
 remain conflicted (`lib/src/repo.rs:2072-2078`), but it is populated only under
 Git interoperation.
 
-Consequence: any cell that replicates `wc_commit_ids` — C, E, F — replicates a
-value with a timing-based tie-break and no content merge.
+Consequence: cells C, E and F cannot inherit that rule. A replicated workspace
+position needs a representation that can hold both sides of a disagreement, and
+an explicit two-way merge over them — the shape jj already uses for a conflicted
+bookmark, rather than the end-time tie-break `merge_wc_commit` applies. A
+timing-based resolution is defensible for one machine reconciling its own
+operations; it is not defensible as the cloud's merge rule, because the loser is
+chosen by clock skew rather than by anything a person can inspect.
 
 ### 5.2 Workspace names are the only key, and there is no machine identity
 
 Every per-workspace map is keyed by workspace name (`core/src/op_store.rs:186-193`).
 A view carries no machine identifier. Two machines that both use a workspace
 named, for example, `default` occupy the same map entry when their views meet;
-two differently named workspaces travel as separate entries. Replicating views
-without changing the key makes workspace identity repository-global.
+two differently named workspaces travel as separate entries.
+
+**Required constraint:** machine identity must form part of the workspace name,
+for example `<machine>/<workspace>`, so that uniqueness is a property of the
+name rather than an assumption about how the system is deployed. jj provides no
+machine identifier to fall back on, so one is generated per node and embedded in
+the names that node creates.
+
+The costs are explicit: machine identity becomes visible in a user-facing
+identifier, and renaming or replacing a machine renames its workspaces, leaving
+the old entries behind. The alternative is worse — a silent collision in which
+two machines' workspaces share one map entry and one of them is discarded by
+§5.1's tie-break.
 
 ## 6. Decisions required
 
