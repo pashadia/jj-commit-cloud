@@ -344,11 +344,13 @@ A view carries no machine identifier. Two machines that both use a workspace
 named, for example, `default` occupy the same map entry when their views meet;
 two differently named workspaces travel as separate entries.
 
-**Required constraint:** machine identity must form part of the workspace name,
-for example `<machine>/<workspace>`, so that uniqueness is a property of the
-name rather than an assumption about how the system is deployed. jj provides no
-machine identifier to fall back on, so one is generated per node and embedded in
-the names that node creates.
+**If positions are replicated, names must be unique across machines.** The view
+keys them by name and carries no machine field, so uniqueness has to come from
+the name rather than from the deployment. jj's `OperationMetadata.hostname`
+cannot supply it: the value is self-asserted, unauthenticated, not stable across
+renames or machine replacement, and can repeat across machines. The name must
+therefore carry a generated, stored per-node identifier, for example
+`<machine>/<workspace>`.
 
 The costs are explicit: machine identity becomes visible in a user-facing
 identifier, and renaming or replacing a machine renames its workspaces, leaving
