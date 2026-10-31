@@ -1,4 +1,4 @@
-# Operation-log scope: five configurations and the decisions they require
+# Operation-log scope: a grid of configurations and the decisions that select one
 
 Status: open. This document records facts about jj's current model, enumerates
 five configurations for how much of the operation log is replicated, and lists
@@ -17,8 +17,10 @@ that architecture. It appears below only where a field of jj's own data model
 refers to a Git repository, because those fields exist in every view whether or
 not the repository uses them.
 
-One parameter is undecided: **which parts of each machine's repository state are
-replicated, and to whom.**
+Two independent parameters are undecided: **how much state is replicated**
+(breadth), and **whether history is replicated or only the current state**
+(depth). Together they define a grid of configurations; §4 names the six that
+are internally consistent.
 
 The parameter is not free. It determines the server's data model, the wire
 format, the storage growth rate, what `jj undo` can mean, whether local work
@@ -114,134 +116,146 @@ operation.
 
 ---
 
-## 4. The configurations
+## 4. The configuration space
 
-Five configurations, ordered by how much state is replicated. For each: what is
-replicated, what it makes possible, what it costs, and what it breaks.
+### 4.1 Two axes
 
-### Option 1 — Nothing replicated
+**Breadth — which state is replicated.**
 
+| | |
+|---|---|
+| **B0** | nothing |
+| **B1** | commit objects, file blobs, bookmark and tag targets |
+| **B2** | B1 plus working-copy pointers |
+
+**Depth — whether a history is replicated, rather than only the current state.**
+
+| | |
+|---|---|
+| **D0** | current state only |
+| **D1** | an ordered record of observable changes: a commit becoming reachable, a ref target changing, a ref removed |
+| **D2** | every local change, including pointer moves and intermediate amendments |
+
+The axes are not fully independent. **D2 requires B2**: a record of pointer moves
+is itself a replication of pointer state. **D1 does not require B2**, because a
+pointer move is not observable.
+
+A third dimension exists but is not an axis: the **representation** of a D1 or
+D2 history, as compact records or as full operation objects each carrying a
+complete view. A full-operation representation always carries B2 fields, so it is
+a variant of a cell rather than an independent choice.
+
+### 4.2 The grid
+
+| Breadth \ Depth | D0 current state | D1 observable history | D2 all history |
+|---|---|---|---|
+| **B2** content, refs, positions | **C** | **E** | **F** |
+| **B1** content and refs | **B** | **D** | — inconsistent |
+| **B0** nothing | **A** | — | — |
+
+Partial order: A < B < C < E < F, and B < D < E.
+
+**F is not C plus D.** E is C plus D. F adds the one thing neither contains:
+unobservable history — pointer moves and intermediate amendments — which is the
+only source of cross-machine undo.
+
+### 4.3 The cells
+
+**A — B0/D0. Nothing replicated.**
 Replicated: nothing. Each machine holds a complete repository and its own
 operation log; nothing is exchanged automatically.
+- Enables: work on one machine.
+- Cost: none; there is no server role.
+- Breaks: no visibility of unpublished work; no shared history; a lost machine
+  cannot be reconstructed; another machine's commits and refs are unknown until
+  copied by hand.
+- Status: baseline.
 
-- **Enables:** work on one machine.
-- **Storage at the server:** none; there is no server role.
-- **Breaks:** no visibility of unpublished work; no shared history of local
-  actions; no way to reconstruct what a lost machine was doing; another
-  machine's commits and refs are unknown until copied by hand.
-- **Available today:** yes, as a baseline.
+**B — B1/D0. Published state.**
+Replicated: commit objects, blobs, bookmark and tag targets. Each machine keeps
+its own operation log with its own snapshots and pointer moves.
+- Enables: publication with no separate synchronisation step; other machines see
+  published work immediately. `jj undo` remains local.
+- Cost: proportional to published commits, not to save frequency.
+- Breaks: unpublished work is invisible; loss of a machine loses it; no
+  cross-machine history; an operation id from another machine cannot be
+  resolved.
+- Status: commits and refs already have a transport model in jj; the work is a
+  new transport and a new peer, not a new model.
 
-### Option 2 — Commits and refs replicated; operation logs local
+**C — B2/D0. Published state and workspace positions.**
+Replicated: B, plus one record per workspace — "workspace `W` of user `U` is at
+commit `X`", where `X` may be unpublished.
+- Enables: other machines see where each workspace is, including uncommitted
+  work; the server can retain unpublished work as a garbage-collection root; a
+  lost machine's checked-out commit is known.
+- Cost: proportional to pointer movements — roughly once per debounce interval
+  while a workspace is edited, per workspace, not per file save.
+- Breaks: no record of how a workspace reached its position; intermediate states
+  remain unrecoverable.
+- Status: new. Needs a record type, a merge rule for pointers, and a decision on
+  whether the authority may move one.
 
-Replicated: commit objects, file blobs, and bookmark and tag targets. Each
-machine keeps its own operation log, containing its own snapshots and pointer
-moves.
+**D — B1/D1. Published history.**
+Replicated: B, plus an ordered record of observable change.
+- Enables: a shared, ordered history of published work; "what changed in this
+  bookmark, and when" answerable without the machine that changed it; recovery
+  of published work across machines.
+- Cost: proportional to publishing activity, plus a second format and a durable
+  cursor.
+- Breaks: a shared history of intermediate saves. An amendment overwritten
+  before it becomes reachable is recorded nowhere.
+- Status: new. Requires a record format, a projection from local operations, and
+  a cursor marking how far the projection has advanced.
 
-- **Enables:** publication with no separate synchronisation step; other machines
-  see published work immediately. `jj undo` continues to operate on local
-  history only.
-- **Storage at the server:** proportional to published commits, not to save
-  frequency. A day of editing that produces one commit costs one commit.
-- **Bandwidth:** on publish, the blobs and trees not already present.
-- **Breaks:** unpublished work is invisible; loss of a machine loses everything
-  not yet published; no cross-machine history; an operation id from another
-  machine cannot be resolved.
-- **Implementation status:** commits and refs already have a transport model in
-  jj; what changes is who the peer is. The work is a new transport, not a new
-  model.
+**E — B2/D1. Published history and workspace positions.**
+C plus D. Costs are additive, and the pointer tie-break of §5.1 applies to every
+replicated position.
 
-### Option 3 — Option 2 plus a replicated working-copy pointer per workspace
-
-Replicated: commits, blobs, bookmark targets, and one small record per
-workspace: "workspace `W` of user `U` is at commit `C`". `C` may be unpublished.
-
-- **Enables:** other machines can see where each workspace is, including
-  uncommitted work; a lost machine's checked-out commit is known to the server;
-  the server has a retention root for unpublished work.
-- **Storage at the server:** proportional to the rate at which workspace
-  pointers move — roughly once per debounce interval while a workspace is
-  actively edited, per workspace, not per file save.
-- **Bandwidth:** one small record per pointer movement.
-- **Exposes:** the existence, location and current commit of each workspace.
-  Not file contents, unless the commits are replicated anyway.
-- **Breaks:** the path by which a workspace reached its current commit is still
-  not recorded; intermediate states are still unrecoverable.
-- **Implementation status:** new. A replicated pointer is not an operation, so it
-  needs its own record type, its own merge rule (pointer conflicts have no
-  content merge), and a decision about whether the authority may ever move a
-  pointer.
-
-### Option 4 — Option 3 plus a replicated log of observable changes
-
-Replicated: everything in option 3, plus an ordered record of changes another
-machine could observe: a commit becoming reachable, a bookmark or tag target
-changing, a ref deletion. Local-only changes (a pointer move with no commit
-change, an intermediate amendment) produce no record.
-
-- **Enables:** a shared, ordered history of published work; answering "what
-  changed in this bookmark, and when" without asking the machine that changed
-  it; recovery of published work across machines.
-- **Storage at the server:** proportional to publishing activity, not to save
-  activity, plus the pointer records from option 3.
-- **Breaks:** a shared history of intermediate saves. An amendment that is
-  overwritten before it becomes reachable is not recorded anywhere.
-- **Implementation status:** new. Requires a second record format, a projection
-  from local operations to records, and a durable cursor marking how far the
-  projection has advanced. jj's ref merge (`core/src/refs.rs:95-118`) supplies
-  the conflict semantics for the ref portion; the pointer portion inherits
-  option 3's problem.
-
-### Option 5 — The whole operation log replicated
-
-Replicated: every operation from every machine, including every snapshot and
-every pointer move. One log, resolved identically everywhere.
-
-- **Enables:** every operation id resolves on every machine; `jj undo` can
-  revert an operation performed elsewhere; any snapshot is available with its
-  refs; `jj op log` is identical on all machines.
-- **Storage at the server:** proportional to the aggregate rate of *saving*.
+**F — B2/D2. Full log.**
+Replicated: every operation from every machine, each with a complete view.
+- Enables: every operation id resolves everywhere; `jj undo` can revert an
+  operation performed elsewhere; any snapshot is available with its refs;
+  `jj op log` is identical on all machines.
+- Cost: proportional to the aggregate rate of *saving*.
   - An operation stores a view id; the view is a separate object. Views are
-    content-addressed, so identical views store once — but consecutive
-    snapshots differ in `head_ids` and `wc_commit_ids`, so deduplication does
-    not reduce the per-save cost.
+    content-addressed, so identical views store once — but consecutive snapshots
+    differ in `head_ids` and `wc_commit_ids`, so deduplication does not reduce
+    the per-save cost.
   - Size: a view is dominated by ref names and targets. A scratch repository
-    with 50 bookmarks produced an 8.8 KB view counting every field, including the
-    interoperation ones;
-    without those, expect a few KB. Order of magnitude 10^3–10^4 bytes per
-    view, plus a few hundred bytes per operation record. Estimate from one
-    measurement, not a benchmark.
+    with 50 bookmarks produced an 8.8 KB view counting every field, including
+    the interoperation ones; without those, expect a few KB. Order of magnitude
+    10^3–10^4 bytes per view, plus a few hundred bytes per operation record.
+    Estimate from one measurement, not a benchmark.
   - Rate: 10,000–30,000 operations per day corresponds to one snapshot every
-    1–3 seconds for 8 hours. That requires continuous activity, a tree change
-    on every snapshot, one operation per save, and no debouncing or coalescing.
-    It is the rate of a configured background-snapshot workflow, not of "the
-    user saved a file": stock jj snapshots when a command runs, and the
+    1–3 seconds for 8 hours. That requires continuous activity, a tree change on
+    every snapshot, one operation per save, and no debouncing or coalescing. It
+    is the rate of a configured background-snapshot workflow, not of "the user
+    saved a file": stock jj snapshots when a command runs, and its
     filesystem-monitor trigger coalesces events.
   - Combined: at those rates, on the order of 10^8 bytes (tens to a few hundred
     megabytes) of view data per active workspace per day, before pruning.
-- **Breaks:** operation ids contain local metadata, so a replicated log is not
-  deduplicated across machines for identical logical changes. Concurrent
-  operations must be merged on receipt; the merge rule for working-copy pointers
-  is a silent tie-break, not a content merge (§5). No local work is visible to
-  other machines unless the server accepted it.
-- **Implementation status:** new, and the largest. `OpStore` and `OpHeadsStore`
-  are traits, so a network-backed implementation is possible; the stock `jj`
-  binary registers only built-in implementations (`cli/src/cli_util.rs:4129`),
-  so this requires either a custom binary or an upstream change.
+- Breaks: operation ids contain local metadata, so identical logical changes are
+  not deduplicated across machines; concurrent operations must be merged on
+  receipt, and the pointer merge is the tie-break of §5.1; no local work is
+  visible to others until the server has accepted it.
+- Status: the largest. `OpStore` and `OpHeadsStore` are traits, so a
+  network-backed implementation is possible; the stock `jj` binary registers
+  only built-in implementations (`cli/src/cli_util.rs:4129`), so this requires
+  either a custom binary or an upstream change.
 
-### Modifiers independent of the option
+### 4.4 Modifiers independent of the cell
 
-- **Retention.** Any replicated history may be retained indefinitely, for a
-  window, or until an explicit prune. Retention determines what "the server has
-  it" means, and it is a separate decision from what is replicated.
+- **Retention.** Any replicated history may be kept indefinitely, for a window,
+  or until an explicit prune. Retention determines what "the server has it"
+  means.
 - **Scope.** Replicated state may be visible to an organisation, a team, or named
   users. Scope affects exposure, not storage.
 - **Encryption.** End-to-end encryption is incompatible with server-side
-  reasoning over history (deduplication by content, conflict detection,
-  retention by reference).
+  reasoning over history — deduplication by content, conflict detection,
+  retention by reference.
 
----
-
-## 5. Two properties that constrain options 3–5
+## 5. Two properties that constrain cells C, E and F
 
 ### 5.1 Working-copy pointers have a tie-break, not a merge
 
@@ -258,8 +272,8 @@ not by which machine is local.
 remain conflicted (`lib/src/repo.rs:2072-2078`), but it is populated only under
 Git interoperation.
 
-Consequence: any option that replicates `wc_commit_ids` replicates a value with
-a timing-based tie-break and no content merge.
+Consequence: any cell that replicates `wc_commit_ids` — C, E, F — replicates a
+value with a timing-based tie-break and no content merge.
 
 ### 5.2 Workspace names are the only key, and there is no machine identity
 
@@ -271,58 +285,56 @@ without changing the key makes workspace identity repository-global.
 
 ## 6. Decisions required
 
-Each item is a question about what must be replicated. The listed options are
-the configurations from §4; the note after each answer states the technical
-consequence.
+### 6.1 The two choices that place a configuration in the grid
 
-**D1. Is the working-copy pointer replicated?**
-No → options 1–2. Yes → options 3–5, and the tie-break in §5 becomes part of
-the system's behaviour.
+**Choice 1 — breadth.**
+- Are commits, blobs and ref targets replicated at all? No → **A**.
+- If yes: are working-copy pointers replicated? No → **B** or **D**. Yes →
+  **C**, **E** or **F**, and the tie-break in §5.1 becomes system behaviour.
 
-**D2. Is unpublished work visible to other machines?**
-Its existence and location → option 3. Its contents → option 5 (or option 3
-plus content replication of the tip commit). Not at all → options 1–2.
+**Choice 2 — depth.**
+- No history, current state only → **D0**.
+- A history of observable change → **D1**.
+- Every local change → **D2**, which forces B2.
 
-**D3. Is a history of intermediate saves required, as opposed to a history of
-published changes?**
-Published only → options 1–4. Every save → option 5.
+### 6.2 What each cell implies
 
-**D4. Must an operation id from one machine resolve on another?**
-No → options 1–4. Yes → option 5.
+| Cell | Operation id resolves elsewhere | Undo another machine's action | Survives loss of a machine | Works while the server is unreachable | Storage grows with | Unpublished work visible |
+|---|---|---|---|---|---|---|
+| **A** | no | no | nothing | yes | nothing | no |
+| **B** | no | no | published work | yes | publishing | no |
+| **C** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **D** | no | no | published work | yes | publishing | no |
+| **E** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **F** | yes | yes | work since the last save | no | saving | content and position |
 
-**D5. Must `jj undo` be able to revert an action performed on another machine?**
-No → options 1–4. Yes → option 5.
+"Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
+id identifies an operation, and only a repository of operations can answer for
+it. That is why only F satisfies it.
 
-**D6. What must survive the loss of a machine?**
-Published work → options 2–5. Work since the last save → options 3 and 5.
-Nothing beyond the working tree → option 1 also suffices.
+### 6.3 Decisions independent of the cell
 
-**D7. Must local work continue while the server is unreachable?**
-Yes → options 1–4, with a local queue. Any option can queue locally, but only
-options 1–2 keep the server out of the local read path.
+**I1. Identity and authentication.** Every cell above A replicates data
+attributed to a person or a machine. jj has no repository id, no client id, no
+sequence number and no signature; `OperationMetadata.username` is an
+unauthenticated claim. The cloud needs its own identity for records and for
+clients, and a rule for what an unauthenticated record may do.
 
-**D8. What is the acceptable server storage growth per active workspace per
-day?**
-Growth proportional to publishing → options 2 and 4. Growth proportional to
-editing → options 3 and 5. This is the cost decision; the placeholder arithmetic
-in §4 is the input.
+**I2. Retention.** How long replicated state is kept, and who may delete it.
+Required for every cell above A, because it decides whether a replicated record
+is a durable fact or a temporary one.
 
-**D9. Which fields of the view are visible to other users?**
-Commits and refs only → options 1–2. Plus workspace identity and location →
-options 3–5. Plus every intermediate state → option 5. Scope (§4, modifiers)
-applies independently.
+**I3. Scope.** Who may see replicated state. Independent of storage; can be
+answered per deployment.
 
-**D10. What is the retention rule, and who may delete replicated history?**
-Independent of the option, and required before any option is implementable,
-because it determines whether a replicated record is a durable fact or a
-temporary one.
-
----
+**I4. Encryption.** Whether the server can read what it stores. End-to-end
+encryption rules out server-side deduplication, conflict detection and retention
+by reference, so it constrains the cells rather than modifying them.
 
 ## 7. What depends on these answers
 
 The following cannot be specified without them, because each has a different
-shape per option:
+shape per cell:
 
 - the server's data model and its conflict semantics (§5);
 - the wire format and its versioning;
@@ -330,8 +342,8 @@ shape per option:
 - the recovery model after machine loss;
 - the privacy model, including whether workspace identity is user-visible;
 - the offline behaviour of the client;
-- the migration path if the answer changes later — options differ in the format
-  of the data at rest, not only in code.
+- the migration path if the answer changes later — cells differ in the format of
+  the data at rest, not only in code.
 
 ---
 
