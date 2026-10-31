@@ -376,12 +376,15 @@ refs → **D** or **E**. History of every change → **F**.
 
 | Cell | Operation id resolves elsewhere | Undo another machine's action | Survives loss of a machine | Works while the server is unreachable | Unpublished work visible |
 |---|---|---|---|---|---|
-| **A** | no | no | nothing | yes | no |
+| **A** | no | no | nothing | n/a | no |
 | **B** | no | no | published work | yes | no |
-| **C** | no | no | work since the last snapshot | yes | content and position |
+| **C** | no | no | everything up to the last snapshot | yes | content and position |
 | **D** | no | no | published work | yes | no |
-| **E** | no | no | work since the last snapshot | yes | content and position |
-| **F** | yes | yes | work since the last snapshot | no | content and position |
+| **E** | no | no | everything up to the last snapshot | yes | content and position |
+| **F** | yes | yes | everything up to the last snapshot | yes, invisible until accepted | content and position |
+
+In F work continues offline; the cell says "invisible until accepted" because
+nothing appears to other machines until the server holds the operation.
 
 "Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
 id identifies an operation, and only a repository of operations can answer for
@@ -416,7 +419,8 @@ shape per cell:
 - the privacy model, including whether workspace identity is user-visible;
 - the identity and authentication model for records and clients, which jj does
   not provide and which no cell can borrow;
-- the offline behaviour of the client;
+- offline behaviour in detail: queueing, retry, and what a client does when its
+  operations diverge on reconnect;
 - the migration path if the answer changes later — cells differ in the format of
   the data at rest, not only in code.
 
