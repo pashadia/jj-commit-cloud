@@ -256,12 +256,20 @@ Replicated: every operation from every machine, each with a complete view.
     megabytes) of view data per active workspace per day, before pruning.
 - Breaks: operation ids contain local metadata, so identical logical changes are
   not deduplicated across machines; concurrent operations must be merged on
-  receipt, and the pointer merge is the tie-break of §5.1; no local work is
-  visible to others until the server has accepted it.
-- Status: the largest. `OpStore` and `OpHeadsStore` are traits, so a
-  network-backed implementation is possible; the stock `jj` binary registers
-  only built-in implementations (`cli/src/cli_util.rs:4129`), so this requires
-  either a custom binary or an upstream change.
+  receipt, and that merge is the two-way merge of positions required by §5.1 —
+  not jj's end-time tie-break. The consequence is disproportionate: with every
+  operation replicated, divergent heads stop being an exception, so every load
+  reconciles views and the merge runs on the path every command takes. jj's
+  merge path moves from recovery to the hot path. No local work is visible to
+  others until the server has accepted it.
+- Status: the largest, and larger than the transport suggests. `OpStore` and
+  `OpHeadsStore` are traits, so a network-backed implementation is possible, and
+  the stock `jj` binary registers only built-in implementations
+  (`cli/src/cli_util.rs:4129`), so this requires either a custom binary or an
+  upstream change. Separately, §5.1's two-way merge cannot be performed on the
+  current representation: `wc_commit_ids` maps each workspace to a single commit
+  and has no way to hold two candidates, so the persisted view and its merge
+  code both change.
 
 ### 4.4 Modifiers independent of the cell
 
@@ -270,9 +278,6 @@ Replicated: every operation from every machine, each with a complete view.
   means.
 - **Scope.** Replicated state may be visible to an organisation, a team, or named
   users. Scope affects exposure, not storage.
-- **Encryption.** End-to-end encryption is incompatible with server-side
-  reasoning over history — deduplication by content, conflict detection,
-  retention by reference.
 
 ## 5. Two properties that constrain cells C, E and F
 
@@ -288,7 +293,7 @@ created and no user is asked. The winner is determined by operation end times,
 not by which machine is local.
 
 `git_heads`, the other per-workspace field, merges as a ref target and can
-remain conflicted (`lib/src/repo.rs:2072-2078`), but it is populated only under
+remain conflicted (`lib/src/repo.rs:2102-2108`), but it is populated only under
 Git interoperation.
 
 Consequence: cells C, E and F cannot inherit that rule. A replicated workspace
@@ -389,7 +394,7 @@ shape per cell:
 - Operation structure: `core/src/op_store.rs:294-320`.
 - Working-copy pointer merge rule: `lib/src/repo.rs:1650-1676`, `lib/src/repo.rs:883`,
   `lib/src/op_heads_store.rs:154`.
-- Git-head merge rule (ref-target semantics): `lib/src/repo.rs:2072-2078`.
+- Git-head merge rule (ref-target semantics): `lib/src/repo.rs:2102-2108`.
 - Snapshot transaction touching heads and pointer together:
   `cli/src/cli_util.rs:2208-2243`.
 - Ref target merge: `core/src/refs.rs:95-118`.
