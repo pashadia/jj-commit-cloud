@@ -3,8 +3,7 @@
 ## 1. The decisions requested
 
 **This document asks for four decisions.** Each is a question about what the
-commit cloud stores on a user's behalf, and each changes the answer to the
-others. The cloud stores the repository; what is undecided is what else it
+commit cloud stores on a user's behalf. The cloud stores the repository; what is undecided is what else it
 stores, and on what terms.
 
 **1. Does it store where each working copy is, as well as what has been committed?**
@@ -56,7 +55,7 @@ implementation, and no option is recommended.
 | **Working-copy pointer** | The commit a named workspace **should have** checked out. Stored in the view (`wc_commit_ids`); the working-copy directory holds which commit is actually checked out. |
 | **Ref target**           | A bookmark's or tag's value, possibly conflicted: `Merge<Option<CommitId>>`.                                                     |
 | **Snapshot** | The act of capturing a workspace's current contents as a commit. It happens on the client's own cadence — a debounce, a maximum age, or an explicit flush — not when a person decides to share anything. jj's word for the act, and its command is `jj util snapshot`. |
-| **Commit** | The stored object a snapshot produces: a tree, metadata and parent pointers, identified by a commit id. jj treats *revision* as a synonym. The identity that survives rewrites is a **change**, which this document does not use. |
+| **Commit** | The stored object a snapshot produces: a tree, metadata and parent pointers, identified by a commit id. jj treats *revision* as a synonym. jj calls the identity that survives rewrites a *change*; below, *change* is used only in its ordinary sense. |
 | **Publish** | The moment a commit becomes reachable from a bookmark or tag, and therefore part of the history other machines are meant to use. A commit may be snapshotted many times and published once. This is the document's own term: jj has no commit-level *published*, calls such a commit a bookmark's target or an ancestor of one, and reserves *immutable* for history that may not be rewritten. |
 
 ---
@@ -103,7 +102,7 @@ operation replicates all of its view.
 
 | # | Field             | Type                                    | Contents                                                                                                                                                                                                                                |
 | - | ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 | `head_ids`        | `HashSet<CommitId>`                     | All visible head commits; at least one.                                                                                                                                                                                                 |
+| 1 | `head_ids`        | `HashSet<CommitId>`                     | All head commits; at least one.                                                                                                                                                                                                 |
 | 2 | `local_bookmarks` | `BTreeMap<RefNameBuf, RefTarget>`       | Local bookmark names and targets. Targets may be conflicted.                                                                                                                                                                            |
 | 3 | `local_tags`      | `BTreeMap<RefNameBuf, RefTarget>`       | Local tags, same shape.                                                                                                                                                                                                                 |
 | 4 | `remote_views`    | `BTreeMap<RemoteNameBuf, RemoteView>`   | Remote-tracking state: the last known bookmark and tag position of each configured remote, plus a tracked/untracked flag per ref. A remembered state, not an authority (`docs/bookmarks.md:63-67`).                                     |
@@ -133,9 +132,9 @@ This grouping is analytic; it is not in the source.
 A snapshot transaction changes fields from more than one category: it writes a
 new working-copy commit and records it in `head_ids` and `wc_commit_ids` in the
 same transaction (`cli/src/cli_util.rs:2208-2243`). Where Git interoperation is
-configured, the same transaction may also update the interoperation fields.
-Replication cannot be decided per category without splitting a single
-operation.
+configured, the same transaction may also update the interoperation fields. If
+operations are the unit of replication, it therefore cannot be decided per
+category without splitting a single operation.
 
 ---
 
@@ -233,7 +232,7 @@ Replicated: B, plus an ordered record of changes to commits and refs.
   of published work across machines.
 - Cost: proportional to publishing activity, plus a second format and a durable
   cursor.
-- Breaks: a shared history of intermediate snapshots. An amendment overwritten
+- Breaks: no shared history of intermediate snapshots. An amendment overwritten
   before it becomes reachable is recorded nowhere.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
@@ -276,7 +275,7 @@ Replicated: every operation from every machine, each with a complete view.
 - Status: the largest, and larger than the transport suggests. `OpStore` and
   `OpHeadsStore` are traits, so a network-backed implementation is possible, and
   the stock `jj` binary registers only built-in implementations
-  (`cli/src/cli_util.rs:4129`), so this requires either a custom binary or an
+  (`cli/src/cli_util.rs:4137`), so this requires either a custom binary or an
   upstream change. Separately, §5.1's two-way merge cannot be performed on the
   current representation: `wc_commit_ids` maps each workspace to a single commit
   and has no way to hold two candidates, so the persisted view and its merge
@@ -319,10 +318,10 @@ roughly one view per snapshot above C's content.
 
 When two views disagree about a `wc_commit_ids` entry, `merge_wc_commit` keeps
 `self_id` unless one side is absent or a trivial merge applies
-(`lib/src/repo.rs:1650-1676`). "Self" is the view being merged into: the local
-view during a transaction, and during automatic reconciliation the earliest head
-by end time, after which the remaining heads are merged in order
-(`lib/src/repo.rs:883`, `lib/src/op_heads_store.rs:154`). No conflict object is
+(`lib/src/repo.rs:1650-1676`). "Self" is the view being merged into: reconciliation
+orders divergent heads by end time and merges each later one into the earliest,
+so the earliest head's value is kept (`lib/src/repo.rs:883`,
+`lib/src/op_heads_store.rs:154`). No conflict object is
 created and no user is asked. The winner is determined by operation end times,
 not by which machine is local.
 
@@ -371,7 +370,7 @@ system's behaviour.
 **Choice 2 — depth.** Current state only → **B** or **C**. History of commits and
 refs → **D** or **E**. History of every change → **F**.
 
-**A** is not reachable through these choices: it is the no-server baseline.
+**A** is not reachable through these choices: it is the no-cloud-role baseline.
 
 ### 6.2 What each cell implies
 
@@ -437,4 +436,4 @@ shape per cell:
 - Ref target merge: `core/src/refs.rs:95-118`.
 - Remote views are a remembered state: `docs/bookmarks.md:63-67`.
 - Operation log and undo: `docs/operation-log.md`.
-- Built-in store registration: `cli/src/cli_util.rs:4129`.
+- Built-in store registration: `cli/src/cli_util.rs:4137`.
