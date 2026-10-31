@@ -1,5 +1,7 @@
 # Operation-log scope
 
+## 1. The decisions requested
+
 **This document asks for four decisions.** Each is a question about what the
 commit cloud stores on a user's behalf, and each changes the answer to the
 others. The cloud stores the repository; what is undecided is what else it
@@ -24,10 +26,10 @@ and therefore whether a client may rely on it.
 Visibility is independent of storage, and decides what a user exposes by working
 in the cloud rather than locally.
 
-**The baseline.** §4.2 also describes one configuration that answers none of
-these questions: no replication at all, which is what jj does today with a Git
-backend. It is included as the reference point the other cells are measured
-against, not as a candidate.
+**The baseline.** §4.3 also describes one configuration that answers none of
+these questions: no cloud role, which is what jj does today with a Git backend.
+It is included as the reference point the other cells are measured against, not
+as a candidate.
 
 **Why these need answers.** Together they determine the server's data model, the
 wire format, what survives the loss of a machine, whether work continues while
@@ -142,21 +144,23 @@ operation.
 
 | | |
 |---|---|
-| nothing | no server role; every machine holds a complete repository |
+| no cloud role | every machine holds a complete repository; sharing happens outside the cloud |
 | content and refs | commit objects, file blobs, bookmark and tag targets |
-| content, refs and positions | the above, plus one record per workspace saying which commit it has checked out |
+| content, refs and positions | the above, plus one record per workspace naming the commit it should have checked out, **and that commit's content**, even when it is unpublished |
 
 **Depth — whether a history is stored, and of what.**
 
 | | |
 |---|---|
 | current state only | the latest value of each thing, and nothing about how it got there |
-| observable history | an ordered record of changes another machine could see: a commit becoming reachable, a ref target changing, a ref removed |
-| all history | an ordered record of every local change, including pointer moves and intermediate amendments |
+| history of commits and refs | an ordered record of changes to the commit graph and to ref targets: a commit becoming reachable, a ref target changing, a ref removed |
+| history of every change | also records workspace pointer moves and intermediate amendments |
 
-The axes are not fully independent. **All history requires positions**, because a
-record of pointer moves is itself a replication of pointer state. **Observable
-history does not**, because a pointer move is not observable.
+The axes are not fully independent. **History of every change requires
+positions**, because a record of pointer moves is itself a replication of pointer
+state. **History of commits and refs does not**, because it records no pointer
+moves — whether a move is *visible* to another machine depends on the breadth
+row, while the depth row decides only whether it is *recorded*.
 
 A third dimension exists but is not an axis: the **representation** of a history,
 as compact records or as full operation objects each carrying a complete view. A
@@ -165,25 +169,25 @@ cell rather than an independent choice.
 
 ### 4.2 The grid
 
-| | current state only | observable history | all history |
+| | current state only | history of commits and refs | history of every change |
 |---|---|---|---|
 | **content, refs, positions** | **C** | **E** | **F** |
 | **content and refs** | **B** | **D** | — inconsistent |
-| **nothing** | **A** | — | — |
+| **no cloud role** | **A** | — | — |
 
 Partial order: A < B < C < E < F, and B < D < E.
 
-**F is not C plus D.** E is C plus D. F adds the one thing neither contains:
-unobservable history — pointer moves and intermediate amendments — which is the
+**F is not C plus D.** E is C plus D. F adds what neither contains: pointer
+moves and intermediate amendments, which no other row records, and which are the
 only source of cross-machine undo.
 
 ### 4.3 The cells
 
-**A — nothing replicated. Baseline, not a candidate.**
-Replicated: nothing. Each machine holds a complete repository and its own
-operation log; sharing happens by explicit transfer — today, through a Git
-remote. This is what jj does with a Git backend, and it is here as the reference
-point the other cells are measured against.
+**A — no cloud role. Baseline, not a candidate.**
+Replicated by the cloud: nothing. Each machine holds a complete repository and
+its own operation log; sharing happens by explicit transfer — today, through a
+Git remote. This is what jj does with a Git backend, and it is here as the
+reference point the other cells are measured against.
 - Enables: work on one machine.
 - Cost: none; there is no server role.
 - Breaks: no visibility of unpublished work; no shared history; a lost machine
@@ -204,19 +208,23 @@ its own operation log with its own snapshots and pointer moves.
 
 **C — content, refs and positions, current state.**
 Replicated: B, plus one record per workspace — "workspace `W` of user `U` is at
-commit `X`", where `X` may be unpublished.
-- Enables: other machines see where each workspace is, including uncommitted
-  work; the server can retain unpublished work as a garbage-collection root; a
-  lost machine's checked-out commit is known.
-- Cost: proportional to pointer movements — roughly once per debounce interval
-  while a workspace is edited, per workspace, not per file save.
-- Breaks: no record of how a workspace reached its position; intermediate states
-  remain unrecoverable.
+commit `X`", where `X` may be unpublished — **and the content of `X`**: its
+commit, trees and blobs. The record alone would be useless to any other machine:
+a pointer to content the server does not hold cannot be read, retained or
+restored.
+- Enables: other machines can resolve and read each workspace's current commit,
+  including work that was never published; the server can retain that work as a
+  garbage-collection root, because it holds the objects; a lost machine loses
+  nothing since its last snapshot.
+- Cost: every snapshot's commit and blobs, at save rate, plus one small record
+  per pointer movement. Content dominates.
+- Breaks: no record of how a workspace reached its position. Only the current
+  snapshot is named, so an amended version is replaced rather than kept.
 - Status: new. Needs a record type, a two-way merge rule for positions (§5.1),
-  and a decision on whether the authority may move one.
+  and a rule for who may move a position.
 
-**D — content and refs, observable history.**
-Replicated: B, plus an ordered record of observable change.
+**D — content and refs, history of commits and refs.**
+Replicated: B, plus an ordered record of changes to commits and refs.
 - Enables: a shared, ordered history of published work; "what changed in this
   bookmark, and when" answerable without the machine that changed it; recovery
   of published work across machines.
@@ -227,11 +235,11 @@ Replicated: B, plus an ordered record of observable change.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
 
-**E — content, refs and positions, observable history.**
+**E — content, refs and positions, history of commits and refs.**
 C plus D. Costs are additive, and the two-way merge of §5.1 applies to every
 replicated position.
 
-**F — all history.**
+**F — history of every change.**
 Replicated: every operation from every machine, each with a complete view.
 - Enables: every operation id resolves everywhere; `jj undo` can revert an
   operation performed elsewhere; any snapshot is available with its refs;
@@ -332,8 +340,8 @@ repository? Content and refs → **B** or **D**. Content, refs and positions →
 **C**, **E** or **F**, and the two-way merge of §5.1 becomes part of the
 system's behaviour.
 
-**Choice 2 — depth.** Current state only → **B** or **C**. Observable history →
-**D** or **E**. All history → **F**.
+**Choice 2 — depth.** Current state only → **B** or **C**. History of commits and
+refs → **D** or **E**. History of every change → **F**.
 
 **A** is not reachable through these choices: it is the no-server baseline.
 
@@ -343,9 +351,9 @@ system's behaviour.
 |---|---|---|---|---|---|---|
 | **A** | no | no | nothing | yes | nothing | no |
 | **B** | no | no | published work | yes | publishing | no |
-| **C** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **C** | no | no | work since the last save | yes | saving | content and position |
 | **D** | no | no | published work | yes | publishing | no |
-| **E** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **E** | no | no | work since the last save | yes | saving + records | content and position |
 | **F** | yes | yes | work since the last save | no | saving | content and position |
 
 "Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
@@ -370,7 +378,7 @@ shape per cell:
 - the wire format and its versioning;
 - whether a **second, replicated log** is introduced alongside jj's own: cells C,
   D and E carry information that jj keeps no cross-machine record of — a
-  workspace position, or an ordered history of observable change — so they need
+  workspace position, or an ordered history of commits and refs — so they need
   a new record type with its own format, identity, ordering and reconciliation
   rules, maintained next to the local operation log rather than derived from a
   replicated one. Cell F avoids the new type by replicating jj's operations
