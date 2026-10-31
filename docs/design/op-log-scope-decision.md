@@ -369,6 +369,13 @@ shape per cell:
 
 - the server's data model and its conflict semantics (§5);
 - the wire format and its versioning;
+- whether a **second, replicated log** is introduced alongside jj's own: cells C,
+  D and E carry information that jj keeps no cross-machine record of — a
+  workspace position, or an ordered history of observable change — so they need
+  a new record type with its own format, identity, ordering and reconciliation
+  rules, maintained next to the local operation log rather than derived from a
+  replicated one. Cell F avoids the new type by replicating jj's operations
+  themselves, and pays for it as described in §4.3;
 - the storage growth model and therefore capacity planning;
 - the recovery model after machine loss;
 - the privacy model, including whether workspace identity is user-visible;
