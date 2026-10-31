@@ -24,6 +24,11 @@ and therefore whether a client may rely on it.
 Visibility is independent of storage, and decides what a user exposes by working
 in the cloud rather than locally.
 
+**The baseline.** §4.2 also describes one configuration that answers none of
+these questions: no replication at all, which is what jj does today with a Git
+backend. It is included as the reference point the other cells are measured
+against, not as a candidate.
+
 **Why these need answers.** Together they determine the server's data model, the
 wire format, what survives the loss of a machine, whether work continues while
 the server is unreachable, what `jj undo` can mean across machines, and how
@@ -137,6 +142,7 @@ operation.
 
 | | |
 |---|---|
+| nothing | no server role; every machine holds a complete repository |
 | content and refs | commit objects, file blobs, bookmark and tag targets |
 | content, refs and positions | the above, plus one record per workspace saying which commit it has checked out |
 
@@ -161,18 +167,30 @@ cell rather than an independent choice.
 
 | | current state only | observable history | all history |
 |---|---|---|---|
-| **content, refs, positions** | **B** | **D** | **E** |
-| **content and refs** | **A** | **C** | — inconsistent |
+| **content, refs, positions** | **C** | **E** | **F** |
+| **content and refs** | **B** | **D** | — inconsistent |
+| **nothing** | **A** | — | — |
 
-Partial order: A < B < D < E, and A < C < D.
+Partial order: A < B < C < E < F, and B < D < E.
 
-**E is not B plus C.** D is B plus C. E adds the one thing neither contains:
+**F is not C plus D.** E is C plus D. F adds the one thing neither contains:
 unobservable history — pointer moves and intermediate amendments — which is the
 only source of cross-machine undo.
 
 ### 4.3 The cells
 
-**A — content and refs, current state.**
+**A — nothing replicated. Baseline, not a candidate.**
+Replicated: nothing. Each machine holds a complete repository and its own
+operation log; sharing happens by explicit transfer — today, through a Git
+remote. This is what jj does with a Git backend, and it is here as the reference
+point the other cells are measured against.
+- Enables: work on one machine.
+- Cost: none; there is no server role.
+- Breaks: no visibility of unpublished work; no shared history; a lost machine
+  cannot be reconstructed; another machine's commits and refs are unknown until
+  copied by hand.
+
+**B — content and refs, current state.**
 Replicated: commit objects, blobs, bookmark and tag targets. Each machine keeps
 its own operation log with its own snapshots and pointer moves.
 - Enables: publication with no separate synchronisation step; other machines see
@@ -184,8 +202,8 @@ its own operation log with its own snapshots and pointer moves.
 - Status: commits and refs already have a transport model in jj; the work is a
   new transport and a new peer, not a new model.
 
-**B — content, refs and positions, current state.**
-Replicated: A, plus one record per workspace — "workspace `W` of user `U` is at
+**C — content, refs and positions, current state.**
+Replicated: B, plus one record per workspace — "workspace `W` of user `U` is at
 commit `X`", where `X` may be unpublished.
 - Enables: other machines see where each workspace is, including uncommitted
   work; the server can retain unpublished work as a garbage-collection root; a
@@ -197,8 +215,8 @@ commit `X`", where `X` may be unpublished.
 - Status: new. Needs a record type, a two-way merge rule for positions (§5.1),
   and a decision on whether the authority may move one.
 
-**C — content and refs, observable history.**
-Replicated: A, plus an ordered record of observable change.
+**D — content and refs, observable history.**
+Replicated: B, plus an ordered record of observable change.
 - Enables: a shared, ordered history of published work; "what changed in this
   bookmark, and when" answerable without the machine that changed it; recovery
   of published work across machines.
@@ -209,11 +227,11 @@ Replicated: A, plus an ordered record of observable change.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
 
-**D — content, refs and positions, observable history.**
-B plus C. Costs are additive, and the two-way merge of §5.1 applies to every
+**E — content, refs and positions, observable history.**
+C plus D. Costs are additive, and the two-way merge of §5.1 applies to every
 replicated position.
 
-**E — all history.**
+**F — all history.**
 Replicated: every operation from every machine, each with a complete view.
 - Enables: every operation id resolves everywhere; `jj undo` can revert an
   operation performed elsewhere; any snapshot is available with its refs;
@@ -256,7 +274,7 @@ Replicated: every operation from every machine, each with a complete view.
   reasoning over history — deduplication by content, conflict detection,
   retention by reference.
 
-## 5. Two properties that constrain cells B, D and E
+## 5. Two properties that constrain cells C, E and F
 
 ### 5.1 Working-copy pointers have a tie-break, not a merge
 
@@ -273,7 +291,7 @@ not by which machine is local.
 remain conflicted (`lib/src/repo.rs:2072-2078`), but it is populated only under
 Git interoperation.
 
-Consequence: cells B, D and E cannot inherit that rule. A replicated workspace
+Consequence: cells C, E and F cannot inherit that rule. A replicated workspace
 position needs a representation that can hold both sides of a disagreement, and
 an explicit two-way merge over them — the shape jj already uses for a conflicted
 bookmark, rather than the end-time tie-break `merge_wc_commit` applies. A
@@ -304,32 +322,36 @@ two machines' workspaces share one map entry and one of them is discarded by
 
 ### 6.1 The two choices that place a configuration in the grid
 
-**Choice 1 — breadth.** Are working-copy positions stored as well as the
-repository? No → **A** or **C**. Yes → **B**, **D** or **E**, and the two-way
-merge of §5.1 becomes part of the system's behaviour.
+**Choice 1 — breadth.** Are working-copy positions stored, or only the
+repository? Content and refs → **B** or **D**. Content, refs and positions →
+**C**, **E** or **F**, and the two-way merge of §5.1 becomes part of the
+system's behaviour.
 
-**Choice 2 — depth.** Current state only → **A** or **B**. Observable history →
-**C** or **D**. All history → **E**.
+**Choice 2 — depth.** Current state only → **B** or **C**. Observable history →
+**D** or **E**. All history → **F**.
+
+**A** is not reachable through these choices: it is the no-server baseline.
 
 ### 6.2 What each cell implies
 
 | Cell | Operation id resolves elsewhere | Undo another machine's action | Survives loss of a machine | Works while the server is unreachable | Storage grows with | Unpublished work visible |
 |---|---|---|---|---|---|---|
-| **A** | no | no | published work | yes | publishing | no |
-| **B** | no | no | work since the last save | yes | publishing + pointer movement | position only |
-| **C** | no | no | published work | yes | publishing | no |
-| **D** | no | no | work since the last save | yes | publishing + pointer movement | position only |
-| **E** | yes | yes | work since the last save | no | saving | content and position |
+| **A** | no | no | nothing | yes | nothing | no |
+| **B** | no | no | published work | yes | publishing | no |
+| **C** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **D** | no | no | published work | yes | publishing | no |
+| **E** | no | no | work since the last save | yes | publishing + pointer movement | position only |
+| **F** | yes | yes | work since the last save | no | saving | content and position |
 
 "Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
 id identifies an operation, and only a repository of operations can answer for
-it. That is why only E satisfies it.
+it. That is why only F satisfies it.
 
 ### 6.3 Decisions independent of the cell
 
 **I1. Retention.** How long replicated state is kept, and who may delete it.
-Required for every cell, because it decides whether a replicated record is a
-durable fact or a temporary one.
+Required for every cell above A, because it decides whether a replicated record
+is a durable fact or a temporary one.
 
 **I2. Scope.** Who may see replicated state. Independent of storage; can be
 answered per deployment.
@@ -341,12 +363,12 @@ shape per cell:
 
 - the server's data model and its conflict semantics (§5);
 - the wire format and its versioning;
-- whether a **second, replicated log** is introduced alongside jj's own: cells B,
-  C and D carry information that jj keeps no cross-machine record of — a
+- whether a **second, replicated log** is introduced alongside jj's own: cells C,
+  D and E carry information that jj keeps no cross-machine record of — a
   workspace position, or an ordered history of observable change — so they need
   a new record type with its own format, identity, ordering and reconciliation
   rules, maintained next to the local operation log rather than derived from a
-  replicated one. Cell E avoids the new type by replicating jj's operations
+  replicated one. Cell F avoids the new type by replicating jj's operations
   themselves, and pays for it as described in §4.3;
 - the storage growth model and therefore capacity planning;
 - the recovery model after machine loss;
