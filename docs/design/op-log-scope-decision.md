@@ -1,11 +1,31 @@
-# Operation-log scope: a grid of configurations and the decisions that select one
+# Operation-log scope
 
-Status: open. This document records facts about jj's current model, enumerates
-five configurations for how much of the operation log is replicated, and lists
-the decisions that select between them. It does not recommend one.
+**Six decisions are requested. Three place the configuration; three apply to
+every configuration.**
 
-Audience: engineers who can answer the decisions in §6. Nothing here is a
-proposal for a specific implementation.
+**Placement.** The answers select one cell of the grid in §4.2.
+
+1. **Is anything replicated at all?** No → cell A, and the remaining questions
+   do not apply.
+2. **Are working-copy pointers replicated?** No → B or D. Yes → C, E or F, and a
+   two-way merge for positions must be implemented (§5.1).
+3. **Is a history replicated, and of what?** Current state only → D0. Observable
+   change only → D1. Every local change → D2, which forces B2.
+
+**Uniform.** These apply to every cell above A, and none can be inferred from
+1–3.
+
+4. **Which identity writes records, and how is it authenticated?** jj has no
+   repository id, client id, sequence number or signature (§6.3).
+5. **How long is replicated state kept, and who may delete it?**
+6. **Who may see replicated state?**
+
+§6.2 states what each cell implies: whether an operation id resolves on another
+machine, whether undo crosses machines, what survives losing a machine, whether
+work continues while the server is unreachable, and how storage grows.
+
+**Audience.** Engineers who can answer 1–6. Nothing here proposes an
+implementation, and no option is recommended.
 
 ---
 
@@ -19,13 +39,12 @@ not the repository uses them.
 
 Two independent parameters are undecided: **how much state is replicated**
 (breadth), and **whether history is replicated or only the current state**
-(depth). Together they define a grid of configurations; §4 names the six that
-are internally consistent.
+(depth). Together they define the grid in §4.2.
 
-The parameter is not free. It determines the server's data model, the wire
+Neither parameter is free. They determine the server's data model, the wire
 format, the storage growth rate, what `jj undo` can mean, whether local work
-survives server unavailability, and what must be migrated if the answer
-changes later. §7 lists what currently depends on it.
+survives server unavailability, and what must be migrated if an answer changes
+later. §7 lists what currently depends on them.
 
 ---
 
