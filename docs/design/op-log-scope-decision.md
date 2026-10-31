@@ -343,10 +343,6 @@ is a durable fact or a temporary one.
 **I3. Scope.** Who may see replicated state. Independent of storage; can be
 answered per deployment.
 
-**I4. Encryption.** Whether the server can read what it stores. End-to-end
-encryption rules out server-side deduplication, conflict detection and retention
-by reference, so it constrains the cells rather than modifying them.
-
 ## 7. What depends on these answers
 
 The following cannot be specified without them, because each has a different
