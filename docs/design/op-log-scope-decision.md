@@ -1,6 +1,6 @@
 # Operation-log scope
 
-**Six decisions are requested. Three place the configuration; three apply to
+**Five decisions are requested. Three place the configuration; two apply to
 every configuration.**
 
 **Placement.** The answers select one cell of the grid in §4.2.
@@ -12,19 +12,22 @@ every configuration.**
 3. **Is a history replicated, and of what?** Current state only → D0. Observable
    change only → D1. Every local change → D2, which forces B2.
 
-**Uniform.** These apply to every cell above A, and none can be inferred from
-1–3.
+**Uniform.** These apply to every cell above A, and neither can be inferred
+from 1–3.
 
-4. **Which identity writes records, and how is it authenticated?** jj has no
-   repository id, client id, sequence number or signature (§6.3).
-5. **How long is replicated state kept, and who may delete it?**
-6. **Who may see replicated state?**
+4. **How long is replicated state kept, and who may delete it?**
+5. **Who may see replicated state?**
 
 §6.2 states what each cell implies: whether an operation id resolves on another
 machine, whether undo crosses machines, what survives losing a machine, whether
 work continues while the server is unreachable, and how storage grows.
 
-**Audience.** Engineers who can answer 1–6. Nothing here proposes an
+**Dependency, not a decision here.** No cell above A can be built without an
+identity and authentication model for records and clients. jj provides none
+(§3.1). That question needs its own threat model and is not asked by this
+document.
+
+**Audience.** Engineers who can answer 1–5. Nothing here proposes an
 implementation, and no option is recommended.
 
 ---
@@ -77,6 +80,9 @@ Consequences:
   `OperationId` includes local metadata (`hostname`, `workspace_name`,
   wall-clock time), so two machines produce different ids for the same logical
   change. The synthetic root operation and root view use fixed zero ids.
+- `OperationMetadata.username` is unauthenticated free text, and an operation
+  has no signature field. Commit objects do have an optional signature;
+  operations do not.
 
 ### 3.2 An operation references a complete view, not a diff
 
@@ -349,17 +355,11 @@ it. That is why only F satisfies it.
 
 ### 6.3 Decisions independent of the cell
 
-**I1. Identity and authentication.** Every cell above A replicates data
-attributed to a person or a machine. jj has no repository id, no client id, no
-sequence number and no signature; `OperationMetadata.username` is an
-unauthenticated claim. The cloud needs its own identity for records and for
-clients, and a rule for what an unauthenticated record may do.
-
-**I2. Retention.** How long replicated state is kept, and who may delete it.
+**I1. Retention.** How long replicated state is kept, and who may delete it.
 Required for every cell above A, because it decides whether a replicated record
 is a durable fact or a temporary one.
 
-**I3. Scope.** Who may see replicated state. Independent of storage; can be
+**I2. Scope.** Who may see replicated state. Independent of storage; can be
 answered per deployment.
 
 ## 7. What depends on these answers
@@ -372,6 +372,8 @@ shape per cell:
 - the storage growth model and therefore capacity planning;
 - the recovery model after machine loss;
 - the privacy model, including whether workspace identity is user-visible;
+- the identity and authentication model for records and clients, which jj does
+  not provide and which no cell can borrow;
 - the offline behaviour of the client;
 - the migration path if the answer changes later — cells differ in the format of
   the data at rest, not only in code.
