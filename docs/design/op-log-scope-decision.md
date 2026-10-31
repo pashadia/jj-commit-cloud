@@ -15,7 +15,7 @@ per-machine fact into replicated state.
 **2. Does it store a history of changes, or only the current state?**
 Current state answers "where is the repository now". A history answers "how did
 it get here, and who moved it". A history of *every* local change additionally
-answers "what did this look like before the last save", and is the only form
+answers "what did this look like before the last snapshot", and is the only form
 from which an action taken on another machine can be undone.
 
 **3. How long is what it stores kept?**
@@ -51,12 +51,13 @@ implementation, and no option is recommended.
 | Term                     | Meaning                                                                                                                          |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | **Operation**            | jj's record of one change to repository state. Contains a view id, parent operation ids, metadata, and a commit-predecessor map. |
-| **View**                 | A complete snapshot of the repository's pointers after an operation. Content-addressed, immutable.                               |
+| **View**                 | A complete record of the repository's pointers after an operation. Content-addressed, immutable.                                 |
 | **Op head**              | An operation with no successor. Loading a repository resolves all heads; more than one means divergence.                         |
 | **Working-copy pointer** | The commit a named workspace **should have** checked out. Stored in the view (`wc_commit_ids`); the working-copy directory holds which commit is actually checked out. |
 | **Ref target**           | A bookmark's or tag's value, possibly conflicted: `Merge<Option<CommitId>>`.                                                     |
-| **Save** | The moment a workspace's current contents become a commit. It happens on the client's own snapshot cadence — a debounce, a maximum age, or an explicit flush — not when a person decides to share anything. A save is local unless a cell replicates saves. |
-| **Publish** | The moment a commit becomes reachable from a bookmark or tag, and therefore part of the history other machines are meant to use. A commit may be saved many times and published once. |
+| **Snapshot** | The act of capturing a workspace's current contents as a commit. It happens on the client's own cadence — a debounce, a maximum age, or an explicit flush — not when a person decides to share anything. jj's word for the act, and its command is `jj util snapshot`. |
+| **Commit** | The stored object a snapshot produces: a tree, metadata and parent pointers, identified by a commit id. jj treats *revision* as a synonym. The identity that survives rewrites is a **change**, which this document does not use. |
+| **Publish** | The moment a commit becomes reachable from a bookmark or tag, and therefore part of the history other machines are meant to use. A commit may be snapshotted many times and published once. This is the document's own term: jj has no commit-level *published*, calls such a commit a bookmark's target or an ancestor of one, and reserves *immutable* for history that may not be rewritten. |
 
 ---
 
@@ -201,7 +202,7 @@ Replicated: commit objects, blobs, bookmark and tag targets. Each machine keeps
 its own operation log with its own snapshots and pointer moves.
 - Enables: publication with no separate synchronisation step; other machines see
   published work immediately. `jj undo` remains local.
-- Cost: proportional to published commits, not to save frequency.
+- Cost: proportional to published commits, not to snapshot frequency.
 - Breaks: unpublished work is invisible; loss of a machine loses it; no
   cross-machine history; an operation id from another machine cannot be
   resolved.
@@ -218,10 +219,10 @@ restored.
   including work that was never published; the server can retain that work as a
   garbage-collection root, because it holds the objects; a lost machine loses
   nothing since its last snapshot.
-- Cost: every snapshot's commit and blobs, at save rate, plus one small record
+- Cost: every snapshot's commit and blobs, at snapshot rate, plus one small record
   per pointer movement. Content dominates.
 - Breaks: no record of how a workspace reached its position. Only the current
-  snapshot is named, so an amended version is replaced rather than kept.
+  commit is named, so an amended version is replaced rather than kept.
 - Status: new. Needs a record type, a two-way merge rule for positions (§5.1),
   and a rule for who may move a position.
 
@@ -232,7 +233,7 @@ Replicated: B, plus an ordered record of changes to commits and refs.
   of published work across machines.
 - Cost: proportional to publishing activity, plus a second format and a durable
   cursor.
-- Breaks: a shared history of intermediate saves. An amendment overwritten
+- Breaks: a shared history of intermediate snapshots. An amendment overwritten
   before it becomes reachable is recorded nowhere.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
@@ -244,13 +245,13 @@ replicated position.
 **F — history of every change.**
 Replicated: every operation from every machine, each with a complete view.
 - Enables: every operation id resolves everywhere; `jj undo` can revert an
-  operation performed elsewhere; any snapshot is available with its refs;
+  operation performed elsewhere; every snapshot's commit is available with its refs;
   `jj op log` is identical on all machines.
-- Cost: proportional to the aggregate rate of *saving*.
+- Cost: proportional to the aggregate rate of *snapshotting*.
   - An operation stores a view id; the view is a separate object. Views are
-    content-addressed, so identical views store once — but consecutive snapshots
-    differ in `head_ids` and `wc_commit_ids`, so deduplication does not reduce
-    the per-save cost.
+    content-addressed, so identical views store once — but consecutive snapshot
+    operations differ in `head_ids` and `wc_commit_ids`, so deduplication does not reduce
+    the per-snapshot cost.
   - Size: a view is dominated by ref names and targets. A scratch repository
     with 50 bookmarks produced an 8.8 KB view counting every field, including
     the interoperation ones; without those, expect a few KB. Order of magnitude
@@ -258,9 +259,9 @@ Replicated: every operation from every machine, each with a complete view.
     Estimate from one measurement, not a benchmark.
   - Rate: 10,000–30,000 operations per day corresponds to one snapshot every
     1–3 seconds for 8 hours. That requires continuous activity, a tree change on
-    every snapshot, one operation per save, and no debouncing or coalescing. It
+    every snapshot, one operation per snapshot, and no debouncing or coalescing. It
     is the rate of a configured background-snapshot workflow, not of "the user
-    saved a file": stock jj snapshots when a command runs, and its
+    edited a file": stock jj snapshots when a command runs, and its
     filesystem-monitor trigger coalesces events.
   - Combined: at those rates, on the order of 10^8 bytes (tens to a few hundred
     megabytes) of view data per active workspace per day, before pruning.
@@ -292,17 +293,17 @@ plan.
 |---|---|---|
 | A | nothing | — |
 | B | published commits, trees and blobs | publishing |
-| C | every save's commit, trees and blobs, plus one record per workspace | saving |
+| C | every snapshot's commit, trees and blobs, plus one record per workspace | snapshotting |
 | D | B, plus one record per change to a commit or ref | publishing |
-| E | C, plus one record per change to a commit or ref | saving |
-| F | C's content, plus one operation record and one full view per save | saving |
+| E | C, plus one record per change to a commit or ref | snapshotting |
+| F | C's content, plus one operation record and one full view per snapshot | snapshotting |
 
-The difference between C and F appears only here: both replicate content at save
-rate, and F adds a view and an operation record on top of every save.
+The difference between C and F appears only here: both replicate content at snapshot
+rate, and F adds a view and an operation record on top of every snapshot.
 
 Order of magnitude, from the measurement in §4.3 F: a full view is 10^3–10^4
 bytes; a commit with its changed trees is normally smaller. F therefore costs
-roughly one view per save above C's content.
+roughly one view per snapshot above C's content.
 
 ### 4.5 Modifiers independent of the cell
 
@@ -378,10 +379,10 @@ refs → **D** or **E**. History of every change → **F**.
 |---|---|---|---|---|---|
 | **A** | no | no | nothing | yes | no |
 | **B** | no | no | published work | yes | no |
-| **C** | no | no | work since the last save | yes | content and position |
+| **C** | no | no | work since the last snapshot | yes | content and position |
 | **D** | no | no | published work | yes | no |
-| **E** | no | no | work since the last save | yes | content and position |
-| **F** | yes | yes | work since the last save | no | content and position |
+| **E** | no | no | work since the last snapshot | yes | content and position |
+| **F** | yes | yes | work since the last snapshot | no | content and position |
 
 "Operation id resolves elsewhere" is a consequence of depth, not of breadth: an
 id identifies an operation, and only a repository of operations can answer for
