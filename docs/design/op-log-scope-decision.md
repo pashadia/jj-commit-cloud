@@ -52,7 +52,7 @@ implementation, and no option is recommended.
 | **Operation**            | jj's record of one change to repository state. Contains a view id, parent operation ids, metadata, and a commit-predecessor map. |
 | **View**                 | A complete record of the repository's pointers after an operation. Content-addressed, immutable.                                 |
 | **Op head**              | An operation with no successor. Loading a repository resolves all heads; more than one means divergence.                         |
-| **Working-copy pointer** | The commit a named workspace **should have** checked out. Stored in the view (`wc_commit_ids`); the working-copy directory holds which commit is actually checked out. |
+| **Working-copy pointer** | The commit a named workspace **should have** checked out. Also called a **position** in this document. Stored in the view (`wc_commit_ids`); the working-copy directory holds which commit is actually checked out. |
 | **Ref target**           | A bookmark's or tag's value, possibly conflicted: `Merge<Option<CommitId>>`.                                                     |
 | **Snapshot** | The act of capturing a workspace's current contents as a commit. It happens on the client's own cadence — a debounce, a maximum age, or an explicit flush — not when a person decides to share anything. jj's word for the act, and its command is `jj util snapshot`. |
 | **Commit** | The stored object a snapshot produces: a tree, metadata and parent pointers, identified by a commit id. jj treats *revision* as a synonym. jj calls the identity that survives rewrites a *change*; below, *change* is used only in its ordinary sense. |
