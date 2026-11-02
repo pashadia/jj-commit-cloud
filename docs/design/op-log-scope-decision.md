@@ -1,47 +1,40 @@
 # Operation-log scope
 
-## 1. The decisions requested
+**This is:** a decision request about what a shared jj server stores.
 
-**This document asks for four decisions.** Each is a question about what the
-commit cloud stores on a user's behalf. The cloud stores the repository; what is undecided is what else it
-stores, and on what terms.
+**Ask:** Decide — two questions that pick one of five designs.
 
-**1. Does it store where each working copy is, as well as what has been committed?**
-Storing the repository makes committed work visible to other machines. Storing
-each working copy's position also makes uncommitted work visible, and turns a
-per-machine fact into replicated state.
+**What I need from you:** before then, whether it keeps (1) each machine's
+uncommitted work or only committed content, and (2) a history or only current
+state.
 
-**2. Does it store a history of changes, or only the current state?**
-Current state answers "where is the repository now". A history answers "how did
-it get here, and who moved it". A history of *every* local change additionally
-answers "what did this look like before the last snapshot", and is the only form
-from which an action taken on another machine can be undone.
+**If you do nothing:** we start the design on [date] with the smallest option —
+committed content, current state; reversing it later changes stored data, not
+just code.
 
-**3. How long is what it stores kept?**
-Retention decides whether a stored record is a durable fact or a temporary one,
-and therefore whether a client may rely on it.
+**Recommendation:** none — §4.4 compares the costs; which to accept is not an
+engineering call.
 
-**4. Who may see what it stores?**
-Visibility is independent of storage, and decides what a user exposes by working
-in the cloud rather than locally.
+**Cost of delay:** the review is done and the design cannot start without it.
 
-**The baseline.** §4.3 also describes one configuration that answers none of
-these questions: no cloud role, which is what jj does today with a Git backend.
-It is included as the reference point the other cells are measured against, not
-as a candidate.
+**Read time:** front block only · +3 min · +8 min all.
 
-**Why these need answers.** Together they determine the server's data model, the
-wire format, what survives the loss of a machine, whether work continues while
-the server is unreachable, what `jj undo` can mean across machines, and how
-storage grows. They are expensive to change later: the configurations differ in
-the format of the data at rest, not only in code.
+## 1. Context
 
-**How to read the rest.** §4 sets out the combinations these answers produce and
-gives each one a name; §6.2 states what each combination implies. Questions 1–2
-select a combination. Questions 3–4 apply to every combination.
+jj records every change locally, and machines share work today by pushing
+commits to a remote. A shared server would make it the place other machines
+learn from, so someone has to decide what it holds. Five designs are possible;
+they differ in whether uncommitted work is visible elsewhere and whether history
+is kept.
 
-**Audience.** Engineers who can answer these four. Nothing here proposes an
-implementation, and no option is recommended.
+**The designs and their costs.** §4.2 names the five, plus one baseline that
+represents today's behaviour. §4.4 compares what each accumulates and what
+drives the growth. §6.1 maps the two answers onto a design. One combination — no
+uncommitted work plus a full history — is impossible, and §4.2 marks it.
+
+**Not part of this ask.** How long records are kept (§6.3, I1) and who may see
+them (§6.3, I2) need answers too, but both can be settled per deployment after
+the design is chosen.
 
 ---
 
