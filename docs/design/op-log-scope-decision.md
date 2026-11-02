@@ -170,14 +170,23 @@ cell rather than an independent choice.
 | | current state only | history of commits and refs | history of every change |
 |---|---|---|---|
 | **content, refs, positions** | **C** | **E** | **F** |
+| **content and refs, record of every commit created** | — inconsistent | **D′** proposed | — inconsistent |
 | **content and refs** | **B** | **D** | — inconsistent |
 | **no cloud role** | **A** | — | — |
 
-Partial order: A < B < C < E < F, and B < D < E.
+D′ stands alone in its row. Its record covers every commit a snapshot produces,
+which is a history by construction, so it has no current-state form; and it keeps
+no positions, so the third column, the operation log, does not apply to it. D′ is
+proposed, not decided.
+
+Partial order: A < B < C < E < F, and B < D < D′ < F. D′ and E are
+incomparable: D′ records more history than E, and E records positions that D′
+does not.
 
 **F is not C plus D.** E is C plus D. F adds what neither contains: pointer
-moves and intermediate amendments, which no other row records, and which are the
-only source of cross-machine undo.
+moves, which no other row records, and operation identity, which is what makes an
+action taken on another machine undoable. D′ records intermediate amendments, but
+without pointer moves or operations.
 
 ### 4.3 The cells
 
@@ -235,6 +244,26 @@ Replicated: B, plus an ordered record of changes to commits and refs.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
 
+**D′ — content and refs, record of every commit created. Proposed, not
+decided.**
+Replicated: D, except that the record covers every commit a snapshot produces,
+not only commits that become reachable, and the content of every commit the
+record names.
+- Enables: everything D enables, plus the evolution of commits that were never
+  published — a change's earlier versions, including amendments overwritten
+  before anyone else saw them.
+- Cost: proportional to snapshotting rather than publishing. Every snapshot
+  creates a commit, so the record grows at snapshot rate, and every commit it
+  names must be kept, so content does too.
+- Breaks: the publishing-rate cost that makes D cheap. Having no positions, it
+  cannot say which machine holds which commit, only which commit a change
+  reached, and operation ids still do not resolve across machines.
+- Status: proposed, not decided. Requires a second record type with its own
+  identity, ordering and reconciliation, as §7 describes for C, D and E.
+- Open: whether ref targets are recorded; whether one record groups the effects
+  of one snapshot; how a client reads the record, since `jj evolog` reads
+  operations and would not read this.
+
 **E — content, refs and positions, history of commits and refs.**
 C plus D. Costs are additive, and the two-way merge of §5.2 applies to every
 replicated position. D's limit on the evolog applies unchanged.
@@ -278,7 +307,8 @@ Replicated: every operation from every machine, each with a complete view.
   upstream change. Separately, §5.2's two-way merge cannot be performed on the
   current representation: `wc_commit_ids` maps each workspace to a single commit
   and has no way to hold two candidates, so the persisted view and its merge
-  code both change.
+  code both change. D′ would not need that change, because it replicates no
+  positions.
 
 ### 4.4 What each cell costs
 
@@ -293,6 +323,7 @@ plan.
 | B | published commits, trees and blobs | publishing |
 | C | every snapshot's commit, trees and blobs, plus one record per workspace | snapshotting |
 | D | B, plus one record per change to a commit or ref | publishing |
+| D′ | B, plus every created commit and its content, plus one record per created commit and per ref change | snapshotting |
 | E | C, plus one record per change to a commit or ref | snapshotting |
 | F | C's content, plus one operation record and one full view per snapshot | snapshotting |
 
@@ -366,12 +397,16 @@ chosen by clock skew rather than by anything a person can inspect.
 ### 6.1 The two choices that place a configuration in the grid
 
 **Choice 1 — breadth.** Are working-copy positions stored, or only the
-repository? Content and refs → **B** or **D**. Content, refs and positions →
-**C**, **E** or **F**, and the two-way merge of §5.2 becomes part of the
-system's behaviour.
+repository? Content and refs → **B**, **D** or **D′**. Content, refs and
+positions → **C**, **E** or **F**, and the two-way merge of §5.2 becomes part of
+the system's behaviour.
 
 **Choice 2 — depth.** Current state only → **B** or **C**. History of commits and
-refs → **D** or **E**. History of every change → **F**.
+refs → **D**, **D′** or **E**. History of every change → **F**.
+
+The two choices do not reach **D′** together: it records every commit created,
+which is a history by construction, so no current-state configuration keeps that
+record.
 
 **A** is not reachable through these choices: it is the no-cloud-role baseline.
 
@@ -383,6 +418,7 @@ refs → **D** or **E**. History of every change → **F**.
 | **B** | no | no | published work | yes | no |
 | **C** | no | no | everything up to the last snapshot | yes | content and position |
 | **D** | no | no | published work | yes | no |
+| **D′** | no | no | everything up to the last snapshot, plus the record | yes | content and history |
 | **E** | no | no | everything up to the last snapshot | yes | content and position |
 | **F** | yes | yes | everything up to the last snapshot | yes, invisible until accepted | content and position |
 
@@ -415,8 +451,9 @@ shape per cell:
   workspace position, or an ordered history of commits and refs — so they need
   a new record type with its own format, identity, ordering and reconciliation
   rules, maintained next to the local operation log rather than derived from a
-  replicated one. Cell F avoids the new type by replicating jj's operations
-  themselves, and pays for it as described in §4.3;
+  replicated one. D′ needs the same record type, with a wider record. Cell F
+  avoids the new type by replicating jj's operations themselves, and pays for it
+  as described in §4.3;
 - the storage growth model and therefore capacity planning;
 - the recovery model after machine loss;
 - the privacy model, including whether workspace identity is user-visible;
