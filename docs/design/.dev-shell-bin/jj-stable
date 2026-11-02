@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /nix/store/jcy1cxkh4x3llwhrswyl98hvky5djnv2-jujutsu-0.41.0/bin/jj "$@"
