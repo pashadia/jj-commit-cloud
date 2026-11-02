@@ -1,36 +1,35 @@
 # Operation-log scope
 
-**This is:** a decision request about what a shared jj server stores.
+**This is:** a decision request about what the jj server stores.
 
-**Ask:** Decide — two questions that pick one of five designs.
+**Ask:** Decide — two questions choosing one of five designs.
 
-**What I need from you:** before then, whether it keeps (1) each machine's
-uncommitted work or only committed content, and (2) a history or only current
-state.
+**What I need from you:** whether it keeps (1) the commit each working copy is
+on, or only commits reachable from a bookmark or tag, and (2) each bookmark and
+tag's current target, the targets it has held, or the whole operation log.
 
-**If you do nothing:** we start the design on [date] with the smallest option —
-committed content, current state; reversing it later changes stored data, not
-just code.
+**If undecided:** the design starts on [date] with the smallest option; changing
+it later alters stored data, not code.
 
-**Recommendation:** none — §4.4 compares the costs; which to accept is not an
+**Recommendation:** none — §4.4 compares the costs; acceptance is not an
 engineering call.
 
-**Cost of delay:** the review is done and the design cannot start without it.
-
-**Read time:** front block only · +3 min · +8 min all.
+**Cost of delay:** the PRD and development plan cannot state scope or dates; the
+commit cloud and VFS deliverables cannot be costed.
 
 ## 1. Context
 
 jj records every change locally, and machines share work today by pushing
 commits to a remote. A shared server would make it the place other machines
 learn from, so someone has to decide what it holds. Five designs are possible;
-they differ in whether uncommitted work is visible elsewhere and whether history
-is kept.
+they differ in whether the commit a working copy is on is visible elsewhere, and
+in how much of the operation log is kept.
 
 **The designs and their costs.** §4.2 names the five, plus one baseline that
 represents today's behaviour. §4.4 compares what each accumulates and what
-drives the growth. §6.1 maps the two answers onto a design. One combination — no
-uncommitted work plus a full history — is impossible, and §4.2 marks it.
+drives the growth. §6.1 maps the two answers onto a design. One combination — keeping the
+operation log but not the commit a working copy is on — is impossible, and §4.2
+marks it.
 
 **Not part of this ask.** How long records are kept (§6.3, I1) and who may see
 them (§6.3, I2) need answers too, but both can be settled per deployment after
