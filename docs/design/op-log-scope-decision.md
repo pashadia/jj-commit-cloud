@@ -148,7 +148,11 @@ category without splitting a single operation.
 |---|---|
 | current state only | the latest value of each thing, and nothing about how it got there |
 | history of commits and refs | an ordered record of changes to the commit graph and to ref targets: a commit becoming reachable, a ref target changing, a ref removed |
-| history of every change | also records workspace pointer moves and intermediate amendments |
+| history of every change | the operation log itself: every pointer move and every rewrite. `jj evolog` follows from it. |
+
+A change's evolog is not separate data: jj derives it by walking operations and
+reading the predecessor list each records. A record that notes a commit was
+abandoned without saying which change replaced it yields no evolog.
 
 The axes are not fully independent. **History of every change requires
 positions**, because a record of pointer moves is itself a replication of pointer
@@ -225,19 +229,22 @@ Replicated: B, plus an ordered record of changes to commits and refs.
 - Cost: proportional to publishing activity, plus a second format and a durable
   cursor.
 - Breaks: no shared history of intermediate snapshots. An amendment overwritten
-  before it becomes reachable is recorded nowhere.
+  before it becomes reachable is recorded nowhere. The evolog does not follow
+  from this record: it notes that a commit was abandoned, not which change
+  replaced it.
 - Status: new. Requires a record format, a projection from local operations, and
   a cursor marking how far the projection has advanced.
 
 **E — content, refs and positions, history of commits and refs.**
 C plus D. Costs are additive, and the two-way merge of §5.2 applies to every
-replicated position.
+replicated position. D's limit on the evolog applies unchanged.
 
 **F — history of every change.**
 Replicated: every operation from every machine, each with a complete view.
 - Enables: every operation id resolves everywhere; `jj undo` can revert an
   operation performed elsewhere; every snapshot's commit is available with its refs;
-  `jj op log` is identical on all machines.
+  `jj op log` is identical on all machines; each change's evolog, which follows
+  from the operation log rather than being stored alongside it.
 - Cost: proportional to the aggregate rate of *snapshotting*.
   - An operation stores a view id; the view is a separate object. Views are
     content-addressed, so identical views store once — but consecutive snapshot
