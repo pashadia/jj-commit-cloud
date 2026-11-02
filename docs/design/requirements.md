@@ -91,14 +91,13 @@ Other people's work flows the other way: up to the authority, then back down to 
 ## 9. The mount is a working copy
 
 - **RQ-9-1** The mount presents at least one working copy that is read-write and usable as a version-control working copy. **Unsettled:** whether the mount root *is* that working copy, or whether working copies live in subdirectories beneath it (OQ-8).
-- **RQ-9-2** The VFS keeps **no persistent state**: no blob cache, no metadata cache, nothing restored after a crash. Transient buffers are permitted and are simply lost.
-- **RQ-9-3** Writes stream to the local node per call; the VFS does not accumulate file content on the node's behalf.
-- **RQ-9-4** The node acknowledges a write once the bytes are durably staged at the node, before any snapshot exists.
-- **RQ-9-5** A snapshot is taken on a trailing debounce of 0.5–1 s, at a 30 s maximum age, and immediately on `fsync` or `close`. Intervals are runtime-configurable.
-- **RQ-9-6** Propagation runs on a separate clock: on idle, on `fsync`, or on a timer (placeholder — see OQ-16). Runtime-configurable. Reaching the authority is eventual and is not the VFS's concern.
-- **RQ-9-7** Uncommitted bytes live at the node in a mutable staging area; they become content-addressed blobs at snapshot time.
-- **RQ-9-8** `fsync` on the mount is satisfied by local durability at the node.
-- **RQ-9-9** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks.
+- **RQ-9-2** The mount keeps **no persistent state for repository content**: no blob cache, no metadata cache, nothing about tracked files restored after a crash. Transient buffers are permitted and are simply lost. Two qualifications. First, the mount keeps a local **overlay directory** for files that belong to no commit — untracked files, environment and secret files, build artifacts — because they must still be written, read and kept across a restart; that overlay is the one thing the mount persists, and it is invisible to the repository. Second, who owns the working-copy pointer (`@`) — the mount or the node it talks to — is open (OQ-18).
+- **RQ-9-3** The node acknowledges a write once the bytes are durably staged at the node, before any snapshot exists.
+- **RQ-9-4** A snapshot is taken on a trailing debounce of 0.5–1 s, at a 30 s maximum age, and immediately on `fsync` or `close`. Intervals are runtime-configurable.
+- **RQ-9-5** Propagation runs on a separate clock: on idle, on `fsync`, or on a timer (placeholder — see OQ-16). Runtime-configurable. Reaching the authority is eventual and is not the VFS's concern.
+- **RQ-9-6** Uncommitted bytes live at the node in a mutable staging area; they become content-addressed blobs at snapshot time.
+- **RQ-9-7** `fsync` on the mount is satisfied by local durability at the node.
+- **RQ-9-8** **(derived)** The mount must support what ordinary version-control work needs: create, write, truncate, rename, delete, make and remove directories, change mode, and create symlinks.
 
 ## 10. Protocol and transport
 
@@ -162,7 +161,9 @@ Stated as out of scope now, without prejudice to later phases:
 | OQ-13 | Should the upstream log carry only observable change, with purely local bookkeeping kept on the node? | RQ-5-4 wants it for performance while RQ-5-3 promises every snapshot's content travels. If the split is real, no node's log is a replica of the authority's and every hop needs a rule for what it forwards; if it is not achievable, the shared log grows at the local churn rate. Overlaps OQ-11, which asks the same about workspace pointers |
 | OQ-14 | When will jj and jj-lib support SHA-256 object ids, and what do we do if they do not? | With support, jj's commit ids are 32 bytes and match our keys exactly. Without it, every object reference needs a mapping layer, which is either a temporary shim or a permanent codec in the read and write paths |
 | OQ-15 | Does a client learn of change automatically, or only when a person runs a command? | Automatic notification needs a long-lived connection and a fanout budget. A command makes the cost explicit and suits a CLI, but a mounted filesystem has no user to run it, so a mount would never learn that the repository moved |
-| OQ-16 | What is the propagation interval? RQ-5-3's placeholder was five minutes and RQ-9-6's is 5–30 s, so the document has already carried two different values | It trades upstream load against how stale the authority's view is. Both endpoints are runtime-configurable, so the number can be measured rather than guessed, but the baseline should not imply two defaults |
+| OQ-16 | What is the propagation interval? RQ-5-3's placeholder was five minutes and RQ-9-5's is 5–30 s, so the document has already carried two different values | It trades upstream load against how stale the authority's view is. Both endpoints are runtime-configurable, so the number can be measured rather than guessed, but the baseline should not imply two defaults |
+| OQ-17 | Does a write land in local storage before it becomes a snapshot, or is every save a snapshot? | Writing locally first gives the tool its bytes back immediately and lets the mount behave like an ordinary filesystem, at the cost of unsnapshotted state a crash can lose. Snapshotting on every save makes change visible sooner and leaves nothing unsaved, at the cost of hashing on the save path |
+| OQ-18 | Who owns the working-copy pointer (`@`) — the mount, or the node it talks to? | If the mount owns it, the pointer is mount state and dies with the mount; if the node owns it, it is durable and visible to the CLI, and the mount reads it at start. This is the same fork as the CLI-to-VFS question |
 
 ---
 

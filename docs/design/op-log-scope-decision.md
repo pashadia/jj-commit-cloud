@@ -246,9 +246,9 @@ Replicated: B, plus an ordered record of changes to commits and refs.
 
 **D′ — content and refs, record of every commit created. Proposed, not
 decided.**
-Replicated: D, except that the record covers every commit a snapshot produces,
-not only commits that become reachable, and the content of every commit the
-record names.
+Replicated: D, except that each record names the commit a snapshot produced and
+the commits it replaced, rather than recording reachability, and the content of
+every commit named is kept.
 - Enables: everything D enables, plus the evolution of commits that were never
   published — a change's earlier versions, including amendments overwritten
   before anyone else saw them.
@@ -321,7 +321,7 @@ plan.
 |---|---|---|
 | A | nothing | — |
 | B | published commits, trees and blobs | publishing |
-| C | every snapshot's commit, trees and blobs, plus one record per workspace | snapshotting |
+| C | the current commit of each workspace, its trees and blobs, plus one record per workspace | snapshotting |
 | D | B, plus one record per change to a commit or ref | publishing |
 | D′ | B, plus every created commit and its content, plus one record per created commit and per ref change | snapshotting |
 | E | C, plus one record per change to a commit or ref | snapshotting |
